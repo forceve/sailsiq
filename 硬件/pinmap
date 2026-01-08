@@ -1,0 +1,27 @@
+// GNSS UART1
+PIN_GNSS_TX = 17;  // ESP -> GNSS_RX
+PIN_GNSS_RX = 18;  // ESP <- GNSS_TX
+
+// I2C
+PIN_I2C_SDA = 8;
+PIN_I2C_SCL = 9;
+
+// EPD / LCD SPI 
+PIN_EPD_BUSY = 21;
+PIN_EPD_DC   = 13;
+PIN_EPD_CS   = 12;
+PIN_EPD_SCK  = 11;
+PIN_EPD_MOSI = 10;
+PIN_EPD_RST  = 14;
+
+// SD SPI
+PIN_SD_CS   = 42;
+PIN_SD_MOSI = 41;
+PIN_SD_SCK  = 40;
+PIN_SD_MISO = 39;
+
+// Buttons
+PIN_SW1 = 7;
+PIN_SW2 = 6;
+PIN_SW3 = 5;
+PIN_SW4 = 4;
