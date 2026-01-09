@@ -3,8 +3,8 @@ PIN_GNSS_TX = 17;  // ESP -> GNSS_RX
 PIN_GNSS_RX = 18;  // ESP <- GNSS_TX
 
 // I2C
-PIN_I2C_SDA = 8;
-PIN_I2C_SCL = 9;
+//PIN_I2C_SDA = 8;
+//PIN_I2C_SCL = 9;
 
 // EPD / LCD SPI 
 PIN_EPD_BUSY = 21;
