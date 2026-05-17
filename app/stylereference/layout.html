@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Layout Demo</title>
+  <style>
+    :root {
+      --bg-deep: #f5f5f5;
+      --bg-panel: #ffffff;
+      --fg-primary: #333333;
+      --fg-secondary: #666666;
+      --accent-primary: #007bff;
+      --border-color: #e0e0e0;
+      --font-stack: 'Helvetica Neue', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-deep);
+      color: var(--fg-primary);
+      font-family: var(--font-stack);
+      height: 100vh;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      grid-template-rows: 1fr 200px;
+      grid-template-areas:
+        "sidebar main"
+        "sidebar bottom";
+      gap: 0;
+    }
+
+    .sidebar {
+      background: var(--bg-panel);
+      border-right: 1px solid var(--border-color);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      grid-area: sidebar;
+    }
+
+    .main-content {
+      background: var(--bg-panel);
+      padding: 24px;
+      border: 1px solid var(--border-color);
+      grid-area: main;
+    }
+
+    .bottom-sidebar {
+      background: var(--bg-panel);
+      padding: 24px;
+      border: 1px solid var(--border-color);
+      grid-area: bottom;
+    }
+
+
+    h1, h2, h3, h4 {
+      margin-bottom: 16px;
+      color: var(--fg-primary);
+    }
+
+    .text-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--fg-secondary);
+      margin-bottom: 8px;
+    }
+
+    .text-content {
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--fg-primary);
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .status-item:last-child {
+      border-bottom: none;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--fg-secondary);
+      border-radius: 50%;
+    }
+
+    .status-dot.active {
+      background: var(--accent-primary);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 32px;
+      height: 32px;
+      background: var(--accent-primary);
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="sidebar">
+    <div class="brand">
+      <div class="brand-icon"></div>
+      <h3>Dashboard</h3>
+    </div>
+
+    <div class="section">
+      <div class="text-label">Navigation</div>
+      <div class="status-item">
+        <div class="status-dot active"></div>
+        <div class="text-content">Overview</div>
+      </div>
+      <div class="status-item">
+        <div class="status-dot"></div>
+        <div class="text-content">Analytics</div>
+      </div>
+      <div class="status-item">
+        <div class="status-dot"></div>
+        <div class="text-content">Settings</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="text-label">System Status</div>
+      <div class="text-content">All systems operational</div>
+    </div>
+  </div>
+
+  <div class="main-content">
+    <h2>Main Content One</h2>
+    <p class="text-content">
+      This is the primary content area that takes up the main space.
+      The layout uses CSS Grid with sidebar and bottom sidebar.
+    </p>
+    <p class="text-content">
+      Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+    </p>
+  </div>
+
+  <div class="bottom-sidebar">
+    <h3>Bottom Sidebar</h3>
+    <p class="text-content">
+      This is the bottom sidebar content area.
+      Additional information and controls can be placed here.
+    </p>
+  </div>
+
+</body>
+</html>
