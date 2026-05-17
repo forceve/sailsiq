@@ -69,16 +69,6 @@
 #define UI_LAYOUT_PREVIEW_H 112
 #define UI_LAYOUT_PREVIEW_RULE_W 2
 #define UI_CALIBRATION_ITEM_COUNT 8
-#define UI_SYSTEM_ITEM_COUNT 6
-#define UI_SYSTEM_DETAIL_LINE_COUNT 5
-#define UI_SYSTEM_TIME_EDIT_OFF 0
-#define UI_SYSTEM_TIME_EDIT_MODE 1
-#define UI_SYSTEM_TIME_EDIT_YEAR 2
-#define UI_SYSTEM_TIME_EDIT_MONTH 3
-#define UI_SYSTEM_TIME_EDIT_DAY 4
-#define UI_SYSTEM_TIME_EDIT_HOUR 5
-#define UI_SYSTEM_TIME_EDIT_MINUTE 6
-#define UI_SYSTEM_TIME_EDIT_GPS_SYNC 7
 
 objects_t objects;
 lv_obj_t *tick_value_change_obj;
@@ -148,15 +138,6 @@ typedef struct {
     lv_obj_t *footer;
 } calibration_view_t;
 
-typedef struct {
-    topbar_view_t top;
-    lv_obj_t *items[UI_SYSTEM_ITEM_COUNT];
-    lv_obj_t *title;
-    lv_obj_t *detail_title;
-    lv_obj_t *detail_lines[UI_SYSTEM_DETAIL_LINE_COUNT];
-    lv_obj_t *footer;
-} system_view_t;
-
 typedef enum {
     UI_VALUE_STYLE_BODY,
     UI_VALUE_STYLE_MED,
@@ -172,13 +153,10 @@ static nav_page_view_t s_finish;
 static settings_view_t s_settings;
 static layout_view_t s_layout;
 static calibration_view_t s_calibration;
-static system_view_t s_system;
 static ui_model_t s_model;
 static ui_page_t s_page = UI_PAGE_COMPASS;
 static uint8_t s_settings_selection = 0;
 static uint8_t s_calibration_selection = 0;
-static uint8_t s_system_selection = 0;
-static uint8_t s_system_time_edit_field = 0;
 static ui_page_mode_t s_page_mode = UI_PAGE_MODE_ALL;
 static uint8_t s_layout_selection = 0;
 static uint8_t s_layout_target_page = UI_LAYOUT_PAGE_COMPASS;
@@ -899,33 +877,6 @@ void create_screen_calibration() {
     s_calibration.footer = label_create(screen, "PG Back   AC Set   +/- Move", UI_CARD_X, UI_FOOT_Y, UI_CARD_W, UI_FOOT_H, &ui_style_footer, LV_TEXT_ALIGN_CENTER);
 }
 
-void create_screen_system() {
-    lv_obj_t *screen = screen_create();
-    objects.system = screen;
-    create_topbar(screen, &s_system.top);
-    lv_obj_t *left = panel_create(screen, 10, 36, 165, 220);
-    lv_obj_t *right = panel_create(screen, 185, 36, 205, 220);
-    const char *items[] = {
-        "Time",
-        "Logger",
-        "GNSS",
-        "Compass",
-        "Battery",
-        "About",
-    };
-
-    s_system.title = label_create(left, "System", 8, 8, 140, 22, &ui_style_label, LV_TEXT_ALIGN_LEFT);
-    for (uint8_t i = 0; i < UI_SYSTEM_ITEM_COUNT; i++) {
-        s_system.items[i] = label_create(left, items[i], 8, 34 + 27 * i, 150, 22, &ui_style_label, LV_TEXT_ALIGN_LEFT);
-    }
-
-    s_system.detail_title = label_create(right, "Status", 8, 8, 188, 22, &ui_style_label, LV_TEXT_ALIGN_LEFT);
-    for (uint8_t i = 0; i < UI_SYSTEM_DETAIL_LINE_COUNT; i++) {
-        s_system.detail_lines[i] = label_create(right, "", 8, 38 + 27 * i, 188, 22, &ui_style_topbar, LV_TEXT_ALIGN_LEFT);
-    }
-    s_system.footer = label_create(screen, "AC Edit Time   PG Back   +/- Move", UI_CARD_X, UI_FOOT_Y, UI_CARD_W, UI_FOOT_H, &ui_style_footer, LV_TEXT_ALIGN_CENTER);
-}
-
 static void format_line_with_unit(char *buf, size_t len, float line_m, bool valid) {
     char value[24];
     ui_format_line(value, sizeof(value), line_m, valid);
@@ -1448,130 +1399,6 @@ static void update_calibration(void) {
     set_text_if_changed(s_calibration.status, s_model.status.fix == FIX_NONE ? "NOFIX - WAIT" : "FIX READY / AC SET");
 }
 
-static const char *fix_name(gnss_fix_t fix) {
-    switch (fix) {
-    case FIX_2D:
-        return "2D";
-    case FIX_3D:
-        return "3D";
-    case FIX_NONE:
-    default:
-        return "NOFIX";
-    }
-}
-
-static const char *clock_mode_name(ui_clock_mode_t mode) {
-    return mode == UI_CLOCK_MANUAL ? "Manual" : "GPS";
-}
-
-static const char *time_edit_field_name(uint8_t field) {
-    switch (field) {
-    case UI_SYSTEM_TIME_EDIT_MODE:
-        return "Mode";
-    case UI_SYSTEM_TIME_EDIT_YEAR:
-        return "Year";
-    case UI_SYSTEM_TIME_EDIT_MONTH:
-        return "Month";
-    case UI_SYSTEM_TIME_EDIT_DAY:
-        return "Day";
-    case UI_SYSTEM_TIME_EDIT_HOUR:
-        return "Hour";
-    case UI_SYSTEM_TIME_EDIT_MINUTE:
-        return "Minute";
-    case UI_SYSTEM_TIME_EDIT_GPS_SYNC:
-        return "Sync GPS";
-    case UI_SYSTEM_TIME_EDIT_OFF:
-    default:
-        return "Off";
-    }
-}
-
-static void update_system_detail(void) {
-    char lines[UI_SYSTEM_DETAIL_LINE_COUNT][32];
-    const char *title = "Status";
-
-    for (uint8_t i = 0; i < UI_SYSTEM_DETAIL_LINE_COUNT; i++) {
-        lines[i][0] = '\0';
-    }
-
-    switch (s_system_selection) {
-    case 0:
-        title = "Time";
-        snprintf(lines[0], sizeof(lines[0]), "Mode: %s", clock_mode_name(s_model.status.clock_mode));
-        snprintf(lines[1], sizeof(lines[1]), "%04u-%02u-%02u", (unsigned)s_model.status.year, (unsigned)s_model.status.month, (unsigned)s_model.status.day);
-        snprintf(lines[2], sizeof(lines[2]), "Clock: %02u:%02u", (unsigned)s_model.status.hour, (unsigned)s_model.status.minute);
-        snprintf(lines[3], sizeof(lines[3]), "Edit: %s", time_edit_field_name(s_system_time_edit_field));
-        snprintf(lines[4], sizeof(lines[4]), s_model.status.clock_mode == UI_CLOCK_GPS ? "AC syncs GPS" : "+/- adjust");
-        break;
-    case 1:
-        title = "Logger";
-        snprintf(lines[0], sizeof(lines[0]), "State: %s", s_model.status.logger_error ? "ERROR" : s_model.status.recording ? "Recording" : "Idle");
-        snprintf(lines[1], sizeof(lines[1]), "Topbar: %s", s_model.status.logger_error ? "RECx" : s_model.status.recording ? "REC*" : "REC-");
-        snprintf(lines[2], sizeof(lines[2]), "Storage: platform");
-        snprintf(lines[3], sizeof(lines[3]), "Control: firmware");
-        break;
-    case 2:
-        title = "GNSS";
-        snprintf(lines[0], sizeof(lines[0]), "Fix: %s", fix_name(s_model.status.fix));
-        snprintf(lines[1], sizeof(lines[1]), "Sat: %u", (unsigned)s_model.status.sat_count);
-        snprintf(lines[2], sizeof(lines[2]), "SOG: %.1f kn", (double)s_model.nav.sog_kn);
-        snprintf(lines[3], sizeof(lines[3]), "COG: %.0f deg", (double)s_model.nav.cog_deg);
-        break;
-    case 3:
-        title = "Compass";
-        snprintf(lines[0], sizeof(lines[0]), "Mag: %s", s_model.nav.mag_bad ? "BAD" : "OK");
-        snprintf(lines[1], sizeof(lines[1]), "Heading: %.0f deg", (double)s_model.nav.heading_deg);
-        snprintf(lines[2], sizeof(lines[2]), "Confidence: %u", (unsigned)s_model.nav.heading_confidence);
-        snprintf(lines[3], sizeof(lines[3]), "Turns: %u", (unsigned)s_model.nav.turns_count);
-        break;
-    case 4:
-        title = "Battery";
-        snprintf(lines[0], sizeof(lines[0]), "Level: %u%%", (unsigned)s_model.status.battery_percent);
-        snprintf(lines[1], sizeof(lines[1]), "Profile: %s", s_model.display.night_mode ? "Night" : "Day");
-        snprintf(lines[2], sizeof(lines[2]), "LCD: %u%%", (unsigned)s_model.display.lcd_brightness_percent);
-        break;
-    case 5:
-    default:
-        title = "About";
-        snprintf(lines[0], sizeof(lines[0]), "SailSIQ LCD UI");
-        snprintf(lines[1], sizeof(lines[1]), "FW: --");
-        snprintf(lines[2], sizeof(lines[2]), "HW: --");
-        snprintf(lines[3], sizeof(lines[3]), "UID: --");
-        break;
-    }
-
-    set_text_if_changed(s_system.detail_title, title);
-    for (uint8_t i = 0; i < UI_SYSTEM_DETAIL_LINE_COUNT; i++) {
-        set_text_if_changed(s_system.detail_lines[i], lines[i]);
-    }
-}
-
-static void update_system(void) {
-    char time_item[32];
-    snprintf(time_item, sizeof(time_item), "Time: %s %02u:%02u", clock_mode_name(s_model.status.clock_mode), (unsigned)s_model.status.hour, (unsigned)s_model.status.minute);
-    const char *items[] = {
-        time_item,
-        s_model.status.logger_error ? "Logger: Error" : s_model.status.recording ? "Logger: Rec" : "Logger: Idle",
-        s_model.status.fix == FIX_NONE ? "GNSS: NOFIX" : "GNSS: FIX",
-        s_model.nav.mag_bad ? "Compass: Bad" : "Compass: OK",
-        "Battery",
-        "About",
-    };
-
-    update_topbar(&s_system.top, &s_model.status);
-    for (uint8_t i = 0; i < UI_SYSTEM_ITEM_COUNT; i++) {
-        update_menu_item(s_system.items[i], items[i], i == s_system_selection);
-    }
-    update_system_detail();
-    if (s_system_time_edit_field == UI_SYSTEM_TIME_EDIT_GPS_SYNC) {
-        set_text_if_changed(s_system.footer, "AC Sync GPS   PG Done   +/- Mode");
-    } else if (s_system_time_edit_field != UI_SYSTEM_TIME_EDIT_OFF) {
-        set_text_if_changed(s_system.footer, "AC Next   PG Done   +/- Adjust");
-    } else {
-        set_text_if_changed(s_system.footer, "AC Edit Time   PG Back   +/- Move");
-    }
-}
-
 void tick_screen_compass() { update_compass(); }
 void tick_screen_start() { update_start(); }
 void tick_screen_mark() { update_mark(); }
@@ -1579,7 +1406,6 @@ void tick_screen_finish() { update_finish(); }
 void tick_screen_settings() { update_settings(); }
 void tick_screen_layout() { update_layout(); }
 void tick_screen_calibration() { update_calibration(); }
-void tick_screen_system() { update_system(); }
 
 typedef void (*tick_screen_func_t)();
 static tick_screen_func_t tick_screen_funcs[] = {
@@ -1590,7 +1416,6 @@ static tick_screen_func_t tick_screen_funcs[] = {
     tick_screen_settings,
     tick_screen_layout,
     tick_screen_calibration,
-    tick_screen_system,
 };
 
 void tick_screen(int screen_index) {
@@ -1629,9 +1454,6 @@ void screens_set_page(ui_page_t page) {
         break;
     case UI_PAGE_CALIBRATION:
         UI_SCREEN_LOAD(objects.calibration);
-        break;
-    case UI_PAGE_SYSTEM:
-        UI_SCREEN_LOAD(objects.system);
         break;
     default:
         UI_SCREEN_LOAD(objects.compass);
@@ -1820,16 +1642,6 @@ void screens_set_calibration_selection(uint8_t index) {
     update_calibration();
 }
 
-void screens_set_system_selection(uint8_t index) {
-    s_system_selection = index % UI_SYSTEM_ITEM_COUNT;
-    update_system();
-}
-
-void screens_set_system_time_edit_field(uint8_t field) {
-    s_system_time_edit_field = field > UI_SYSTEM_TIME_EDIT_GPS_SYNC ? UI_SYSTEM_TIME_EDIT_OFF : field;
-    update_system();
-}
-
 void screens_update(const ui_model_t *model) {
     if (model != NULL) {
         s_model = *model;
@@ -1842,7 +1654,6 @@ void screens_update(const ui_model_t *model) {
     update_settings();
     update_layout();
     update_calibration();
-    update_system();
 }
 
 void create_screens() {
@@ -1858,6 +1669,5 @@ void create_screens() {
     create_screen_settings();
     create_screen_layout();
     create_screen_calibration();
-    create_screen_system();
     apply_all_layouts();
 }
