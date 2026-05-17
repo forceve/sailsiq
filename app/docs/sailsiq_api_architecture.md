@@ -61,7 +61,18 @@
 | **POST** | `/parser/preview` | 上传文件并获取预览数据 (不存库) | `Multipart/form-data` (file: .gpx/.bin) |
 | **POST** | `/sessions/import` | 导入文件并直接创建 Session | `Multipart/form-data` (file, metadata) |
 
-#### E) 导出与分享 (Export & Share)
+---
+
+### 2.2 P1 增强功能 (Experience Boost)
+
+#### E) 视频辅助 (Video Overlay)
+
+| Method | Endpoint | Description | Payload / Params |
+| :--- | :--- | :--- | :--- |
+| **POST** | `/sessions/:id/video/link` | 关联外部视频链接 | `{ videoUrl, offsetTime }` |
+| **POST** | `/sessions/:id/video/sync` | 更新视频与轨迹的同步偏移 | `{ offsetMs }` |
+
+#### F) 导出与分享 (Export & Share)
 
 | Method | Endpoint | Description | Payload / Params |
 | :--- | :--- | :--- | :--- |
@@ -69,11 +80,7 @@
 | **POST** | `/sessions/:id/export/pdf` | 请求生成 PDF 报告 | `{ includeEvents: true, ... }` |
 | **POST** | `/sessions/:id/export/video-assets` | 请求生成视频叠加组件 | `{ format: "mp4", components: [...] }` |
 
----
-
-### 2.2 P1 增强功能 (Experience Boost)
-
-#### H) 自动标红 (Auto Highlights)
+#### G) 自动标红 (Auto Highlights)
 
 | Method | Endpoint | Description | Payload / Params |
 | :--- | :--- | :--- | :--- |
@@ -81,20 +88,13 @@
 | **GET** | `/sessions/:id/analysis/markers` | 获取系统生成的疑似问题点 | - |
 | **POST** | `/sessions/:id/analysis/verify` | 教练确认/否决问题点 | `{ markerId, action: "confirm" | "reject", reason, comment }` |
 
-#### I) A/B 对比 (Compare)
+#### H) A/B 对比 (Compare)
 
 | Method | Endpoint | Description | Payload / Params |
 | :--- | :--- | :--- | :--- |
 | **GET** | `/sessions/compare` | 获取多个 Session 的对比数据 | `?ids=id1,id2` |
 
-#### K) 视频辅助 (Video Overlay)
-
-| Method | Endpoint | Description | Payload / Params |
-| :--- | :--- | :--- | :--- |
-| **POST** | `/sessions/:id/video/link` | 关联外部视频链接 | `{ videoUrl, offsetTime }` |
-| **POST** | `/sessions/:id/video/sync` | 更新视频与轨迹的同步偏移 | `{ offsetMs }` |
-
-#### J) 课程胶囊 (Lesson Capsule)
+#### I) 课程胶囊 (Lesson Capsule)
 
 | Method | Endpoint | Description | Payload / Params |
 | :--- | :--- | :--- | :--- |
