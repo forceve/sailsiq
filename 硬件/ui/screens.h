@@ -16,7 +16,6 @@ typedef struct _objects_t {
     lv_obj_t *settings;
     lv_obj_t *layout;
     lv_obj_t *calibration;
-    lv_obj_t *system;
 } objects_t;
 
 extern objects_t objects;
@@ -29,7 +28,6 @@ enum ScreensEnum {
     SCREEN_ID_SETTINGS = 5,
     SCREEN_ID_LAYOUT = 6,
     SCREEN_ID_CALIBRATION = 7,
-    SCREEN_ID_SYSTEM = 8,
 };
 
 void create_screen_compass();
@@ -39,7 +37,6 @@ void create_screen_finish();
 void create_screen_settings();
 void create_screen_layout();
 void create_screen_calibration();
-void create_screen_system();
 void tick_screen_compass();
 void tick_screen_start();
 void tick_screen_mark();
@@ -47,7 +44,6 @@ void tick_screen_finish();
 void tick_screen_settings();
 void tick_screen_layout();
 void tick_screen_calibration();
-void tick_screen_system();
 
 void tick_screen_by_id(enum ScreensEnum screenId);
 void tick_screen(int screen_index);
@@ -77,8 +73,6 @@ bool screens_layout_config_in_range(const ui_layout_config_t *config);
 ui_page_mode_t screens_get_page_mode(void);
 bool screens_main_page_enabled(ui_page_t page);
 void screens_set_calibration_selection(uint8_t index);
-void screens_set_system_selection(uint8_t index);
-void screens_set_system_time_edit_field(uint8_t field);
 
 
 #ifdef __cplusplus
