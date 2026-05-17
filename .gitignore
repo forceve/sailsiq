@@ -1,2 +1,28 @@
 .history/
 
+# Dependencies
+**/node_modules/
+
+# Build artifacts
+**/dist/
+**/dist-ssr/
+**/.vite/
+**/coverage/
+**/*.tsbuildinfo
+
+# Environment
+**/.env
+**/.env.local
+
+# Logs
+**/logs/
+**/*.log
+
+# Wrangler
+**/.wrangler/
+
+# Python cache
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+
