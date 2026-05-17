@@ -31,7 +31,7 @@ EVT 必须证明：
 1. **航向可用且可信**：静止稳定、转动响应自然、输出可信度
 2. **GNSS 可用**：定位/时间稳定、可记录、可用于实时计算
 3. **竞赛闭环可用**：Start → Upwind → Downwind → Finish 一条链跑通
-4. **数据可用**：日志能被 SailSIQ 复盘/教学平台直接消费
+4. **数据可用**：日志经约定格式（见 **§1.3**）可被 SailSIQ 复盘/教学平台**导入**并用于时间轴/航迹复盘
 
 > EVT 不追求“全自动教练”，但要做到“在水上确实好用”。
 
@@ -55,6 +55,17 @@ SailSIQ 电子罗经验证机是一台面向竞赛与训练的航海仪表，提
 - 航段：迎风/顺风对标（进标阶段）
 - 冲线：迎风/顺风冲线（Finish line guidance）
 
+### 1.3 与复盘 Web 端的导入对齐（Consumption alignment）
+
+复盘 **Web 端当前可直接解析**的航迹文件类型：**GPX**（`.gpx`）、**UBX**（`.ubx`）、**SailSIQ `.bin`**（由平台 `shared/trackImport` 识别多种载荷）。**并非** SD 卡上任意自定义文本或未定稿二进制都能被 App 自动消费。
+
+**对 EVT 的要求**：
+
+- 若机内写入专有日志：应通过固件或配套工具 **导出为上述类型之一**，或严格遵循已与平台约定的 **`.bin`/JSON 字段布局**（与 §11 字段逐步对齐）。
+- 与 GNSS 模块一致时，**UBX 导出**（如 PVT）可与现有导入层自然衔接；全量 IMU/磁力计高频帧需在 `.bin` 或后续 schema 中扩展约定。
+
+平台 MVP 范围见：`../app/docs/sail_siq_mvp_平台 MVP 设计总纲.md`。
+
 ---
 
 ## 2. 系统总体架构（System Architecture）
@@ -69,7 +80,7 @@ SailSIQ 电子罗经验证机是一台面向竞赛与训练的航海仪表，提
 [ ESP32-S3 MCU ]
   |      |      |
  IMU   GNSS   Display
-(BMI) (UART) (E-Ink)
+(BMI) (UART) (4.2" TFT-LCD)
   |
 Magnetometer (I2C/SPI)
   |
@@ -86,13 +97,13 @@ Magnetometer (I2C/SPI)
 | IMU          | BMI160                 | roll/pitch/yaw\_rate |
 | Magnetometer | BMM150 / IST8310       | **强烈建议**：静止航向需要      |
 | GNSS         | MG-F10（UBX）            | 1–10Hz，输出位置/速度/时间    |
-| Display      | 800×400 E-Ink          | 低功耗，静态可读             |
+| Display      | **4.2 寸** TFT-LCD（液晶），800×400（与采购模组 datasheet 不一致时以模组为准） | 高刷新、彩色/灰阶依模组；需背光策略与户外反光评估 |
 | Storage      | microSD 或 QSPI Flash   | EVT 推荐 SD（调试方便）      |
 | Power        | 1S 锂电 + 充电 + 3.3V DCDC | 避免 LDO 压差发热          |
 
 ### 2.3 SPI/I2C 资源规划（建议）
 
-- SPI Host A：E-Ink（高带宽，避免与 IMU 抢占）
+- SPI Host A：**4.2 寸** TFT-LCD / 液晶模组（高带宽，避免与 IMU 抢占；接口以所选驱动芯片为准，如 RGB/SPI/QSPI）
 - SPI Host B：BMI160 + microSD（片选共享）
 - I2C：Magnetometer（或 SPI 也可）
 
@@ -103,7 +114,7 @@ Magnetometer (I2C/SPI)
 ### 3.1 电源策略（EVT 最省心）
 
 - **1S 电池**（LiPo/18650/21700）
-- **3.3V 优先 DCDC**（墨水屏刷新/无线峰值电流更稳）
+- **3.3V 优先 DCDC**（液晶背光与驱动、无线峰值电流更稳）
 - 电量检测：EVT 可先用分压 ADC + RC 滤波
 
 ### 3.2 RF 与材料（重要）
@@ -147,7 +158,7 @@ Magnetometer (I2C/SPI)
 - Fleet：倒计时 + SYNC + 到线垂距 + Burn/Late
 - Match：**两步设置（开始时间/进 Box 时间）+ 航速显示（启航前Dial‑up / 冲刺）+ 进 Box 与起航的 Burn/Late**
 
-### 4.5 航段闭环场景（新增 4 个场景模块）（新增 4 个场景模块）
+### 4.5 航段闭环场景（4 个场景模块）
 
 - 迎风对标（Upwind Mark Approach）
 - 顺风对标（Downwind Mark Approach）
@@ -159,7 +170,7 @@ Magnetometer (I2C/SPI)
 - **上电即开始记录**：设备启动后立即开始写卡
 - **自动文件分段**：在开始启航倒计时和通过终点线时自动分段，便于按轮次组织数据
 - 统一 session 模型，支持后端复盘
-- 记录 active\_scene / target\_id / rounding\_side                                                         
+- 记录 `active_scene` / `target_id` / `rounding_side`
 
 ---
 
@@ -200,14 +211,9 @@ Magnetometer (I2C/SPI)
 
 #### 5.3.3 报警逻辑（可选，EVT 可关）
 
-- `SOG > 1.0 kn`（低速不稳定，避免误报警）
-
-- `Heading confidence >= 60%`（示例阈值）
-
-- `active_scene ∈ {Upwind Mark, Upwind Finish}`（仅在迎风场景启用）
+> 前提：已满足 **§5.3.2 启用条件** 时再评估下列阈值，避免误报。
 
 - **Drift Angle 超阈值**：`|drift_deg| > 12°` 持续 3s → 提示 `CRAB ALERT`
-
 - **横移速度超阈值**：`|v_lat| > 0.8 kn` 持续 3s → 提示 `CRAB HIGH`
 
 #### 5.3.4 UI 表达（建议）
@@ -279,7 +285,7 @@ Magnetometer (I2C/SPI)
 
 ---
 
-## 7. VMG 模块（VMG Module）（VMG Module）
+## 7. VMG 模块（VMG Module）
 
 ### 7.1 VMG 类型与公式
 
@@ -446,7 +452,7 @@ Match Start 采用两步设置，简化配置：
 
 ---
 
-## 10. UI 与交互（E‑ink 适配）
+## 10. UI 与交互（4.2 寸液晶 / TFT-LCD 适配）
 
 ### 10.1 页面集合（Pages）
 
@@ -458,10 +464,9 @@ Match Start 采用两步设置，简化配置：
 
 ### 10.2 刷新策略（建议）
 
-- 大数字：1–2Hz 局刷（看屏幕能力）
-- 倒计时：1Hz
-- 其余信息：0.5–1Hz
-- 尽量避免频繁全刷
+- **4.2 寸液晶**无墨水屏局刷/残影约束：大数字与倒计时可用 **2–10Hz 全屏刷新**（仍可按功耗做节流）
+- 静态文字/次要指标：**0.5–2Hz** 或与主数字同帧更新即可
+- **背光**：按环境光或用户档位调节，兼顾户外可读与续航
 
 ### 10.3 自动切换策略（EVT：自动为主，支持手动覆盖）
 
@@ -620,7 +625,7 @@ Match Start 采用两步设置，简化配置：
 1.  **Settings 入口**：在任意主页面，**长按 PAGE (B1)** 进入设置菜单。
 2.  **返回逻辑**：在设置/子菜单中，**短按 PAGE (B1)** 为返回上一级；**长按 PAGE (B1)** 为直接退出到主页面。
 3.  **数值调节**：**短按** B3/B4 为步进（±1）；**长按** B3/B4 为快进（连续调节）。
-4.  **屏幕刷新**：为解决墨水屏残影，在 **Compass 页面长按 ACTION (B2)** 触发强制全刷。
+4.  **背光/亮度**：在 **Compass 页面长按 ACTION (B2)** 循环背光档位（低/中/高等，具体档位数由固件定义；也可改为在 Settings 中统一配置）。
 
 ### 10A.4 各页面按钮行为一览
 
@@ -631,7 +636,7 @@ Match Start 采用两步设置，简化配置：
 | **PG 短按** | 切换到 Start 页面 | 循环翻页：Compass → Start → Mark → Finish |
 | **PG 长按** | **进入 Settings** | 全局统一入口 |
 | **AC 短按** | 切换次要信息 | 例如切换底部显示：时间 / 速度 / 电量 |
-| **AC 长按** | **强制屏幕全刷** | 清除残影 (Clean Screen) |
+| **AC 长按** | **背光档位循环** | 户外可读与省电平衡（非“清残影”；液晶无墨水屏全刷需求） |
 | **− / +** | 无 | 避免误触 |
 
 #### B) Start – Fleet（群发赛）
@@ -725,7 +730,7 @@ Match Start 采用两步设置，简化配置：
 2.  **防误触**：重置、结束记录等“破坏性”操作必须长按，水上碰撞不易触发。
 3.  **操作清晰**：去掉了“同时按两个键”的杂技动作，单指即可完成所有操作。
 
-## 11. 数据记录 (Logging)（Logging）
+## 11. 数据记录（Logging）
 
 ### 11.1 记录字段（建议）
 
@@ -742,6 +747,9 @@ active_scene
 race_mode (fleet/match)
 target_id (WM/LM/FINISH)
 rounding_side (when applicable)
+# 与 §10B.6 自动切换/分段对齐时，建议同时写入事件列或并行事件流，例如：
+# event_code (e.g. EVENT_START_TIMER, EVENT_START_CROSS, EVENT_MARK_ROUND, EVENT_FINISH_CROSS, EVENT_WAIT_ENTER/EXIT)
+# event_payload (optional JSON / key-value)
 ```
 
 ### 11.2 写入策略
@@ -787,7 +795,7 @@ rounding_side (when applicable)
 | imu\_task    | BMI160 采样    | 200–400Hz      |
 | gnss\_task   | UBX 解析       | 5–10Hz         |
 | fusion\_task | 姿态/航向融合      | 50–100Hz       |
-| ui\_task     | 渲染与局刷节流      | 1–5Hz          |
+| ui\_task     | 渲染与刷新节流      | 1–10Hz（较原墨水屏方案可更高刷新，仍建议节流） |
 | logger\_task | 批量写入         | 0.5–1Hz（batch） |
 | ble\_task    | （可选）BLE/调试通讯 | 1Hz            |
 
@@ -799,7 +807,7 @@ rounding_side (when applicable)
 
 - IMU 噪声与稳定性
 - Heading 漂移/抖动
-- 墨水屏局刷残影/闪烁可读性
+- 液晶户外可读性（反光、对比度）与背光/眩光主观评价
 - 功耗（待机/记录/无线）
 
 ### 13.2 磁环境（如果带磁力计）
@@ -815,7 +823,6 @@ rounding_side (when applicable)
 - Fleet 起航：Burn/Late 体感一致
 - **Match 起航：4min Box 流程可顺利执行，航速显示对 Dial‑up / 冲刺有帮助**
 - Mark/Finish 场景：DTG/VMG/LINE 指标连续可用
-- Mark/Finish 场景：DTG/VMG/LINE 指标连续可用
 
 ---
 
@@ -825,6 +832,8 @@ rounding_side (when applicable)
 - 极曲线/性能模型（polar-based performance）
 - AI 战术结论（自动教练）
 - 原生 iOS/Android 深度整合
+
+复盘/教学 **Web 端 MVP** 的功能边界与优先级见：`../app/docs/sail_siq_mvp_平台 MVP 设计总纲.md`（与 EVT「不做自动教练」一致处可交叉引用）。
 
 ---
 

@@ -1,5 +1,7 @@
 # SailsIQ EVT — 页面段码(ASCII)复刻 + 字段解释
 
+> **机载屏**：**4.2 寸 TFT-LCD（液晶）**（分辨率与固件 UI 以 EVT BOM / datasheet 为准；线框为示意布局）。
+>
 > 说明：下面用 **等宽字符(段码/ASCII wireframe)** 复刻你图里的四个页面：**Compass / Start / Mark / Finish**。每个页面后面按字段逐条解释含义。
 
 ---

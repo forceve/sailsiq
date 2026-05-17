@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-
+LV_FONT_DECLARE(lv_font_montserrat_90);
 
 #ifdef __cplusplus
 }
