@@ -195,14 +195,27 @@ export const videoApi = {
     data: {
       videoUrl: string;
       videoType: VideoType;
+      videoTrackId?: string;
+      videoTrackName?: string;
       label?: string;
       offsetMs?: number;
       sync?: VideoSyncBinding;
+      placementSource?: SessionVideo['placementSource'];
+      placementConfidence?: SessionVideo['placementConfidence'];
     },
   ) => request<SessionVideo>('POST', `/v1/sessions/${sessionId}/video/link`, data),
   sync: (
     sessionId: string,
-    data: { offsetMs: number; sync?: VideoSyncBinding; videoId?: string },
+    data: {
+      offsetMs: number;
+      sync?: VideoSyncBinding;
+      videoId?: string;
+      videoType?: VideoType;
+      videoTrackId?: string;
+      videoTrackName?: string;
+      placementSource?: SessionVideo['placementSource'];
+      placementConfidence?: SessionVideo['placementConfidence'];
+    },
   ) =>
     request<SessionVideo>('POST', `/v1/sessions/${sessionId}/video/sync`, data),
   remove: (sessionId: string, videoId?: string) =>

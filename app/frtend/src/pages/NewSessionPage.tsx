@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronRight,
   CheckCircle,
   Database,
   FileText,
@@ -9,6 +11,7 @@ import {
   Grid,
   Map as MapIcon,
   Pencil,
+  Plus,
   RefreshCw,
   Upload,
   X,
@@ -29,13 +32,22 @@ import {
   parseLocalTrackFile,
   type ParsedImportTrack,
 } from '@/services/workspace/localTrackSession';
-import type { ParseResult, VideoSyncBinding, VideoType } from '@/types/models';
-import { tryComputeVideoOffsetFromWallClock } from '@/utils/videoAutoOffset';
-import { detectVideoTypeFromFile } from '@/utils/videoTypeDetection';
+import type {
+  ParseResult,
+  VideoPlacementConfidence,
+  VideoPlacementSource,
+  VideoSyncBinding,
+  VideoType,
+} from '@/types/models';
+import {
+  getVideoFileWallClockStartMs,
+  tryComputeVideoOffsetFromWallClock,
+} from '@/utils/videoAutoOffset';
 import {
   createOffsetOnlyVideoSync,
   createVideoSyncBindingFromAnchor,
 } from '@/utils/videoSync';
+import { getLocalVideoSignature } from '@/utils/videoSession';
 import type {
   ReplayNavigationState,
   WorkspaceTrackFileSummary,
@@ -58,8 +70,15 @@ type VideoSourceKind = 'workspace_video' | 'local_file';
 interface SelectedVideoSource {
   kind: VideoSourceKind;
   file: File;
-  videoType: VideoType;
+  durationMs: number;
   workspaceVideo?: WorkspaceVideoFileSummary;
+}
+
+interface SelectedVideoTrack {
+  id: string;
+  name: string;
+  videoType: VideoType;
+  clips: SelectedVideoSource[];
 }
 
 const SUPPORTED_IMPORT_EXTENSIONS = new Set(['gpx', 'ubx', 'bin', 'csv', 'tsv', 'txt']);
@@ -76,7 +95,17 @@ function isSupportedImportFile(fileName: string): boolean {
 
 function formatDateTime(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString(undefined, {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      });
 }
 
 function formatFileSize(size: number): string {
@@ -90,11 +119,62 @@ function formatFileSize(size: number): string {
   return `${value.toFixed(unitIndex === 0 ? 0 : value >= 10 ? 1 : 2)} ${units[unitIndex]}`;
 }
 
+function formatVideoDurationMs(durationMs: number): string {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return 'Unknown duration';
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds.toString().padStart(2, '0')}s` : `${seconds}s`;
+}
+
 function getBaseName(fileName: string): string {
   const trimmed = fileName.trim();
   const dotIndex = trimmed.lastIndexOf('.');
   const baseName = dotIndex > 0 ? trimmed.slice(0, dotIndex) : trimmed;
   return baseName.toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+function getSelectedVideoKey(video: SelectedVideoSource): string {
+  return video.kind === 'workspace_video' && video.workspaceVideo
+    ? `workspace:${video.workspaceVideo.relativePath}`
+    : `local:${getLocalVideoSignature(video.file)}`;
+}
+
+function createPreboundVideoTrackId(): string {
+  return `video-track-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function readVideoFileDurationMs(file: File): Promise<number> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    let settled = false;
+
+    const finish = (durationMs: number) => {
+      if (settled) return;
+      settled = true;
+      video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      video.removeEventListener('durationchange', handleLoadedMetadata);
+      video.removeEventListener('error', handleError);
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      URL.revokeObjectURL(url);
+      resolve(durationMs);
+    };
+
+    const handleLoadedMetadata = () =>
+      finish(Number.isFinite(video.duration) && video.duration > 0 ? video.duration * 1000 : 0);
+    const handleError = () => finish(0);
+
+    video.preload = 'metadata';
+    video.playsInline = true;
+    video.addEventListener('loadedmetadata', handleLoadedMetadata);
+    video.addEventListener('durationchange', handleLoadedMetadata);
+    video.addEventListener('error', handleError);
+    video.src = url;
+    video.load();
+  });
 }
 
 export default function NewSessionPage() {
@@ -124,9 +204,10 @@ export default function NewSessionPage() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [saveImportToWorkspace, setSaveImportToWorkspace] = useState(true);
   const [copyImportSourceToWorkspace, setCopyImportSourceToWorkspace] = useState(true);
-  const [selectedVideo, setSelectedVideo] = useState<SelectedVideoSource | null>(null);
+  const [videoTracks, setVideoTracks] = useState<SelectedVideoTrack[]>([]);
+  const [expandedVideoTrackId, setExpandedVideoTrackId] = useState<string | null>(null);
+  const [videoFilePickerTrackId, setVideoFilePickerTrackId] = useState<string | null>(null);
   const [videoSelectionError, setVideoSelectionError] = useState<string | null>(null);
-  const [videoType, setVideoType] = useState<VideoType>('flat');
   const videoInputRef = useRef<HTMLInputElement | null>(null);
 
   const isRound =
@@ -185,7 +266,9 @@ export default function NewSessionPage() {
     setParseResult(null);
     setParsedTrackBundle(null);
     setParseError(null);
-    setSelectedVideo(null);
+    setVideoTracks([]);
+    setExpandedVideoTrackId(null);
+    setVideoFilePickerTrackId(null);
     setVideoSelectionError(null);
   }, []);
 
@@ -274,22 +357,91 @@ export default function NewSessionPage() {
     }
   };
 
-  const handleSelectWorkspaceVideo = async (workspaceVideo: WorkspaceVideoFileSummary) => {
+  const handleAddVideoTrack = useCallback(() => {
+    const trackId = createPreboundVideoTrackId();
+    setVideoTracks((prev) => [
+      ...prev,
+      {
+        id: trackId,
+        name: `Video Track ${prev.length + 1}`,
+        videoType: 'flat',
+        clips: [],
+      },
+    ]);
+    setExpandedVideoTrackId(trackId);
+  }, []);
+
+  const handleRemoveVideoTrack = useCallback((trackId: string) => {
+    setVideoTracks((prev) => prev.filter((track) => track.id !== trackId));
+    setExpandedVideoTrackId((prev) => (prev === trackId ? null : prev));
+    setVideoFilePickerTrackId((prev) => (prev === trackId ? null : prev));
+  }, []);
+
+  const updateVideoTrack = useCallback(
+    (trackId: string, patch: Partial<Pick<SelectedVideoTrack, 'name' | 'videoType'>>) => {
+      setVideoTracks((prev) =>
+        prev.map((track) => (track.id === trackId ? { ...track, ...patch } : track)),
+      );
+    },
+    [],
+  );
+
+  const addVideosToTrack = useCallback(
+    (trackId: string, nextVideos: SelectedVideoSource[]) => {
+      if (nextVideos.length === 0) return;
+      setVideoTracks((prev) => {
+        if (!prev.some((track) => track.id === trackId)) return prev;
+        const nextKeys = new Set(nextVideos.map(getSelectedVideoKey));
+        return prev.map((track) => {
+          const retainedClips = track.clips.filter(
+            (video) => !nextKeys.has(getSelectedVideoKey(video)),
+          );
+          return track.id === trackId
+            ? { ...track, clips: [...retainedClips, ...nextVideos] }
+            : { ...track, clips: retainedClips };
+        });
+      });
+      setExpandedVideoTrackId(trackId);
+    },
+    [],
+  );
+
+  const removeVideoFromTrack = useCallback((trackId: string, videoKey: string) => {
+    setVideoTracks((prev) =>
+      prev.map((track) =>
+        track.id === trackId
+          ? {
+              ...track,
+              clips: track.clips.filter((video) => getSelectedVideoKey(video) !== videoKey),
+            }
+          : track,
+      ),
+    );
+  }, []);
+
+  const handleSelectWorkspaceVideo = async (
+    workspaceVideo: WorkspaceVideoFileSummary,
+    trackId: string,
+  ) => {
     if (!currentWorkspace) return;
+    if (!videoTracks.some((track) => track.id === trackId)) {
+      setVideoSelectionError('Create or expand a video track before adding clips.');
+      return;
+    }
     setVideoSelectionError(null);
     try {
       const file = await loadLocalWorkspaceVideoFile(
         currentWorkspace.id,
         workspaceVideo.relativePath,
       );
-      const detected = await detectVideoTypeFromFile(file);
-      setVideoType(detected.videoType);
-      setSelectedVideo({
+      const durationMs = await readVideoFileDurationMs(file).catch(() => 0);
+      const nextVideo: SelectedVideoSource = {
         kind: 'workspace_video',
         file,
         workspaceVideo,
-        videoType: detected.videoType,
-      });
+        durationMs,
+      };
+      addVideosToTrack(trackId, [nextVideo]);
     } catch (error) {
       setVideoSelectionError(
         error instanceof Error
@@ -300,23 +452,31 @@ export default function NewSessionPage() {
   };
 
   const handlePickLocalVideo = useCallback(
-    async (file: File) => {
+    async (files: File[], trackId: string) => {
+      if (!videoTracks.some((track) => track.id === trackId)) {
+        setVideoSelectionError('Create or expand a video track before adding clips.');
+        return;
+      }
       setVideoSelectionError(null);
       try {
-        const detected = await detectVideoTypeFromFile(file);
-        setVideoType(detected.videoType);
-        setSelectedVideo({
-          kind: 'local_file',
-          file,
-          videoType: detected.videoType,
-        });
+        const nextVideos = await Promise.all(
+          files.map(async (file) => {
+            const durationMs = await readVideoFileDurationMs(file).catch(() => 0);
+            return {
+              kind: 'local_file' as const,
+              file,
+              durationMs,
+            };
+          }),
+        );
+        addVideosToTrack(trackId, nextVideos);
       } catch (error) {
         setVideoSelectionError(
           error instanceof Error ? error.message : 'Failed to inspect the selected video.',
         );
       }
     },
-    [],
+    [addVideosToTrack, videoTracks],
   );
 
   const recommendedWorkspaceVideos = useMemo(() => {
@@ -336,11 +496,6 @@ export default function NewSessionPage() {
       (video) => !recommendedSet.has(video.relativePath),
     );
   }, [recommendedWorkspaceVideos, workspaceVideoFiles]);
-
-  useEffect(() => {
-    if (!selectedVideo) return;
-    setSelectedVideo((prev) => (prev ? { ...prev, videoType } : prev));
-  }, [videoType]);
 
   const handleDrop = useCallback(
     (event: React.DragEvent) => {
@@ -382,31 +537,65 @@ export default function NewSessionPage() {
         const trackOriginForVideo =
           parsedTrackBundle?.trackTimeOriginUnixMs ??
           importedSession.trackTimeOriginUnixMs;
-        const wallClockVideoOffset =
-          selectedVideo && trackOriginForVideo != null
-            ? tryComputeVideoOffsetFromWallClock(
-                { ...importedSession, trackTimeOriginUnixMs: trackOriginForVideo },
-                durationMsForVideo,
-                selectedVideo.file.lastModified,
-              )
-            : null;
-        const resolvedPreboundVideoOffsetMs = wallClockVideoOffset ?? 0;
-        const resolvedPreboundVideoSync: VideoSyncBinding = wallClockVideoOffset != null
-          ? createVideoSyncBindingFromAnchor(
-              {
-                videoTimeMs: 0,
-                trackTimeMs: wallClockVideoOffset,
-                realUnixMs: selectedVideo?.file.lastModified,
-                source: 'auto-file-time',
-                confidence: 'medium',
-              },
-              { trackTimeOriginUnixMs: trackOriginForVideo },
-            )
-          : createOffsetOnlyVideoSync(resolvedPreboundVideoOffsetMs, {
-              trackTimeOriginUnixMs: trackOriginForVideo,
-              source: 'manual-video-track',
-              confidence: 'low',
-            });
+        const pendingClipEndsByTrack = new Map<string, number>();
+        const preboundVideos = videoTracks.flatMap((track, trackIndex) => {
+          const videoTrackName = track.name.trim() || `Video Track ${trackIndex + 1}`;
+          return track.clips.map((video) => {
+            const videoWallClockStartMs = getVideoFileWallClockStartMs(
+              video.file,
+              video.durationMs,
+            );
+            const wallClockVideoOffset =
+              trackOriginForVideo != null && videoWallClockStartMs != null
+                ? tryComputeVideoOffsetFromWallClock(
+                    { ...importedSession, trackTimeOriginUnixMs: trackOriginForVideo },
+                    durationMsForVideo,
+                    videoWallClockStartMs,
+                  )
+                : null;
+            const placementSource: VideoPlacementSource =
+              wallClockVideoOffset != null ? 'file-time' : 'sequential-fallback';
+            const placementConfidence: VideoPlacementConfidence =
+              wallClockVideoOffset != null ? 'medium' : 'low';
+            const offsetMs =
+              wallClockVideoOffset ??
+              pendingClipEndsByTrack.get(track.id) ??
+              0;
+            const clipEndMs = offsetMs + Math.max(0, video.durationMs);
+            pendingClipEndsByTrack.set(
+              track.id,
+              Math.max(pendingClipEndsByTrack.get(track.id) ?? 0, clipEndMs),
+            );
+            const sync: VideoSyncBinding =
+              wallClockVideoOffset != null
+                ? createVideoSyncBindingFromAnchor(
+                    {
+                      videoTimeMs: 0,
+                      trackTimeMs: wallClockVideoOffset,
+                      realUnixMs: videoWallClockStartMs ?? undefined,
+                      source: 'auto-file-time',
+                      confidence: 'medium',
+                    },
+                    { trackTimeOriginUnixMs: trackOriginForVideo },
+                  )
+                : createOffsetOnlyVideoSync(offsetMs, {
+                    trackTimeOriginUnixMs: trackOriginForVideo,
+                    source: 'manual-video-track',
+                    confidence: 'low',
+                  });
+
+            return {
+              track,
+              videoTrackName,
+              video,
+              offsetMs,
+              sync,
+              placementSource,
+              placementConfidence,
+              promptSync: wallClockVideoOffset === null,
+            };
+          });
+        });
 
         if (
           currentWorkspace &&
@@ -431,23 +620,35 @@ export default function NewSessionPage() {
             parsedTrack: parsedTrackBundle ?? undefined,
           });
 
-          if (selectedVideo?.kind === 'workspace_video' && selectedVideo.workspaceVideo) {
-            const videoBinding: WorkspaceVideoBinding = {
-              path: `../../${selectedVideo.workspaceVideo.relativePath}`,
-              fileName: selectedVideo.file.name,
-              label: selectedVideo.workspaceVideo.name,
+          const videoBindings: WorkspaceVideoBinding[] = preboundVideos
+            .filter(
+              (entry) =>
+                entry.video.kind === 'workspace_video' &&
+                entry.video.workspaceVideo,
+            )
+            .map((entry) => ({
+              path: `../../${entry.video.workspaceVideo!.relativePath}`,
+              fileName: entry.video.file.name,
+              videoTrackId: entry.track.id,
+              videoTrackName: entry.videoTrackName,
+              label: entry.video.workspaceVideo!.name,
               sourceKind: 'workspace_discovery',
               storageMode: 'workspace_relative_ref',
-              videoType: selectedVideo.videoType,
-              offsetMs: resolvedPreboundVideoOffsetMs,
-              sync: resolvedPreboundVideoSync,
+              videoType: entry.track.videoType,
+              offsetMs: entry.offsetMs,
+              sync: entry.sync,
+              placementSource: entry.placementSource,
+              placementConfidence: entry.placementConfidence,
               copiedToWorkspace: false,
               confirmed: true,
               boundAt: new Date().toISOString(),
-            };
-            await saveLocalWorkspaceSessionVideoBindings(currentWorkspace.id, importedSession.id, [
-              videoBinding,
-            ]);
+            }));
+          if (videoBindings.length > 0) {
+            await saveLocalWorkspaceSessionVideoBindings(
+              currentWorkspace.id,
+              importedSession.id,
+              videoBindings,
+            );
           }
 
           await reloadWorkspaces();
@@ -455,32 +656,44 @@ export default function NewSessionPage() {
           await refreshWorkspaceVideos();
         }
 
-        const navigationState: ReplayNavigationState | undefined = selectedVideo
-          ? {
-              preboundVideo:
-                selectedVideo.kind === 'workspace_video' && selectedVideo.workspaceVideo
-                  ? {
-                      kind: 'workspace_video',
-                      fileName: selectedVideo.file.name,
-                      relativePath: selectedVideo.workspaceVideo.relativePath,
-                      label: selectedVideo.workspaceVideo.name,
-                      videoType: selectedVideo.videoType,
-                      offsetMs: resolvedPreboundVideoOffsetMs,
-                      sync: resolvedPreboundVideoSync,
-                      promptSync: wallClockVideoOffset === null,
-                    }
-                  : {
-                      kind: 'local_file',
-                      fileName: selectedVideo.file.name,
-                      file: selectedVideo.file,
-                      label: selectedVideo.file.name,
-                      videoType: selectedVideo.videoType,
-                      offsetMs: resolvedPreboundVideoOffsetMs,
-                      sync: resolvedPreboundVideoSync,
-                      promptSync: wallClockVideoOffset === null,
-                    },
-            }
-          : undefined;
+        const navigationPreboundVideos = preboundVideos.map((entry) =>
+          entry.video.kind === 'workspace_video' && entry.video.workspaceVideo
+            ? {
+                kind: 'workspace_video' as const,
+                fileName: entry.video.file.name,
+                relativePath: entry.video.workspaceVideo.relativePath,
+                label: entry.video.workspaceVideo.name,
+                videoTrackId: entry.track.id,
+                videoTrackName: entry.videoTrackName,
+                videoType: entry.track.videoType,
+                offsetMs: entry.offsetMs,
+                sync: entry.sync,
+                placementSource: entry.placementSource,
+                placementConfidence: entry.placementConfidence,
+                promptSync: entry.promptSync,
+              }
+            : {
+                kind: 'local_file' as const,
+                fileName: entry.video.file.name,
+                file: entry.video.file,
+                label: entry.video.file.name,
+                videoTrackId: entry.track.id,
+                videoTrackName: entry.videoTrackName,
+                videoType: entry.track.videoType,
+                offsetMs: entry.offsetMs,
+                sync: entry.sync,
+                placementSource: entry.placementSource,
+                placementConfidence: entry.placementConfidence,
+                promptSync: entry.promptSync,
+              },
+        );
+        const navigationState: ReplayNavigationState | undefined =
+          navigationPreboundVideos.length > 0
+            ? {
+                preboundVideo: navigationPreboundVideos[0],
+                preboundVideos: navigationPreboundVideos,
+              }
+            : undefined;
 
         navigate(`/session/${importedSession.id}/replay`, {
           state: navigationState,
@@ -842,7 +1055,7 @@ export default function NewSessionPage() {
                       </p>
                     </div>
                     <p className={`mt-1 text-xs ${s.textSecondary}`}>
-                      Pre-bind a video now, then fine-tune sync in Replay.
+                      Pre-bind one or more clips to a video track, then fine-tune sync in Replay.
                     </p>
                   </div>
                   {currentWorkspace ? (
@@ -857,143 +1070,292 @@ export default function NewSessionPage() {
                   ) : null}
                 </div>
 
-                <div className="flex flex-col gap-2">
-                  <label className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
-                    Video Type
-                  </label>
-                  <select
-                    value={videoType}
-                    onChange={(event) => setVideoType(event.target.value as VideoType)}
-                    className={`w-full px-3 py-2 text-sm rounded-lg ${s.input}`}
-                  >
-                    <option value="flat">Flat video</option>
-                    <option value="360">360 video</option>
-                  </select>
-                </div>
-
-                {selectedVideo ? (
-                  <div className={`rounded-xl ${s.accentBg} p-3 flex items-start justify-between gap-3`}>
-                    <div className="min-w-0">
-                      <div className={`truncate text-sm font-semibold ${s.textPrimary}`}>
-                        {selectedVideo.workspaceVideo?.name ?? selectedVideo.file.name}
-                      </div>
-                      <div className={`mt-1 text-xs ${s.textSecondary}`}>
-                        {selectedVideo.kind === 'workspace_video'
-                          ? `Workspace video · ${selectedVideo.workspaceVideo?.relativePath}`
-                          : 'Local file · Prebound for Replay only'}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedVideo(null)}
-                      className={`text-xs ${s.textSecondary} hover:opacity-70 flex items-center gap-1`}
-                    >
-                      <X className="w-3 h-3" />
-                      Remove
-                    </button>
-                  </div>
-                ) : null}
-
-                {currentWorkspace ? (
-                  <div className="grid gap-3">
-                    {workspaceVideoError ? (
-                      <div className="flex items-start gap-2 text-xs text-red-500">
-                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                        <span>{workspaceVideoError}</span>
-                      </div>
-                    ) : null}
-
-                    {recommendedWorkspaceVideos.length > 0 ? (
-                      <div className="flex flex-col gap-2">
-                        <p className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
-                          Recommended Workspace Videos
-                        </p>
-                        <div className="grid gap-2">
-                          {recommendedWorkspaceVideos.map((video) => (
-                            <button
-                              key={video.relativePath}
-                              type="button"
-                              onClick={() => void handleSelectWorkspaceVideo(video)}
-                              className={`flex items-center justify-between gap-3 px-3 py-3 text-left transition-all ${
-                                selectedVideo?.kind === 'workspace_video' &&
-                                selectedVideo.workspaceVideo?.relativePath === video.relativePath
-                                  ? `${s.accentBg}`
-                                  : s.buttonSecondary
-                              } ${isRound ? 'rounded-xl' : 'rounded-sm'}`}
-                            >
-                              <div className="min-w-0">
-                                <div className={`truncate text-sm font-medium ${s.textPrimary}`}>
-                                  {video.name}
-                                </div>
-                                <div className={`text-xs ${s.textSecondary}`}>
-                                  {video.relativePath}
-                                </div>
-                              </div>
-                              <span className={`shrink-0 text-xs ${s.textSecondary}`}>Recommended</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {additionalWorkspaceVideos.length > 0 ? (
-                      <div className="flex flex-col gap-2">
-                        <p className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
-                          Other Workspace Videos
-                        </p>
-                        <div className="grid gap-2 max-h-48 overflow-y-auto">
-                          {additionalWorkspaceVideos.map((video) => (
-                            <button
-                              key={video.relativePath}
-                              type="button"
-                              onClick={() => void handleSelectWorkspaceVideo(video)}
-                              className={`flex items-center justify-between gap-3 px-3 py-3 text-left transition-all ${
-                                selectedVideo?.kind === 'workspace_video' &&
-                                selectedVideo.workspaceVideo?.relativePath === video.relativePath
-                                  ? `${s.accentBg}`
-                                  : s.buttonSecondary
-                              } ${isRound ? 'rounded-xl' : 'rounded-sm'}`}
-                            >
-                              <div className="min-w-0">
-                                <div className={`truncate text-sm font-medium ${s.textPrimary}`}>
-                                  {video.name}
-                                </div>
-                                <div className={`text-xs ${s.textSecondary}`}>
-                                  {video.relativePath}
-                                </div>
-                              </div>
-                              <span className={`shrink-0 text-xs ${s.textSecondary}`}>
-                                {video.collection === 'incoming' ? 'Incoming' : 'Library'}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : workspaceVideoFiles.length === 0 ? (
-                      <p className={`text-sm ${s.textSecondary}`}>
-                        No workspace videos found in incoming/video or library/video.
-                      </p>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-3">
                   <p className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
-                    Local Video File
+                    Video Tracks
                   </p>
                   <button
                     type="button"
-                    onClick={() => videoInputRef.current?.click()}
-                    className={`inline-flex items-center justify-center gap-2 px-4 py-2 text-sm ${s.buttonSecondary}`}
+                    onClick={handleAddVideoTrack}
+                    className={`inline-flex items-center gap-2 px-3 py-2 text-xs ${s.buttonSecondary}`}
                   >
-                    <Upload className="w-4 h-4" />
-                    {selectedVideo?.kind === 'local_file' ? 'Replace Local Video' : 'Choose Local Video'}
+                    <Plus className="w-3.5 h-3.5" />
+                    New Track
                   </button>
-                  <p className={`text-xs ${s.textSecondary}`}>
-                    Local file prebinding carries into Replay for this navigation. Use workspace
-                    videos for a more stable local-first path.
-                  </p>
                 </div>
+
+                {videoTracks.length === 0 ? (
+                  <div className={`border ${s.divider} px-3 py-4 text-sm ${s.textSecondary} ${
+                    isRound ? 'rounded-xl' : 'rounded-sm'
+                  }`}>
+                    No video tracks selected.
+                  </div>
+                ) : (
+                  <div className="grid gap-3">
+                    {videoTracks.map((track, trackIndex) => {
+                      const isExpanded = expandedVideoTrackId === track.id;
+                      const trackName = track.name.trim() || `Video Track ${trackIndex + 1}`;
+                      return (
+                        <div
+                          key={track.id}
+                          className={`border ${s.divider} ${
+                            isRound ? 'rounded-xl' : 'rounded-sm'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 p-3">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedVideoTrackId((prev) =>
+                                  prev === track.id ? null : track.id,
+                                )
+                              }
+                              className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                            >
+                              {isExpanded ? (
+                                <ChevronDown className={`h-4 w-4 shrink-0 ${s.textSecondary}`} />
+                              ) : (
+                                <ChevronRight className={`h-4 w-4 shrink-0 ${s.textSecondary}`} />
+                              )}
+                              <div className="min-w-0">
+                                <div className={`truncate text-sm font-semibold ${s.textPrimary}`}>
+                                  {trackName}
+                                </div>
+                                <div className={`text-xs ${s.textSecondary}`}>
+                                  {track.videoType === '360' ? '360 video' : 'Flat video'} -{' '}
+                                  {track.clips.length} clip{track.clips.length === 1 ? '' : 's'}
+                                </div>
+                              </div>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveVideoTrack(track.id)}
+                              className={`shrink-0 text-xs ${s.textSecondary} hover:opacity-70 flex items-center gap-1`}
+                            >
+                              <X className="w-3 h-3" />
+                              Remove
+                            </button>
+                          </div>
+
+                          {isExpanded ? (
+                            <div className={`border-t ${s.divider} p-3 flex flex-col gap-4`}>
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <div className="flex flex-col gap-2">
+                                  <label className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
+                                    Track Name
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={track.name}
+                                    onChange={(event) =>
+                                      updateVideoTrack(track.id, { name: event.target.value })
+                                    }
+                                    placeholder={`Video Track ${trackIndex + 1}`}
+                                    className={`w-full px-3 py-2 text-sm rounded-lg ${s.input}`}
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-2">
+                                  <label className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
+                                    Video Type
+                                  </label>
+                                  <select
+                                    value={track.videoType}
+                                    onChange={(event) =>
+                                      updateVideoTrack(track.id, {
+                                        videoType: event.target.value as VideoType,
+                                      })
+                                    }
+                                    className={`w-full px-3 py-2 text-sm rounded-lg ${s.input}`}
+                                  >
+                                    <option value="flat">Flat video</option>
+                                    <option value="360">360 video</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              {track.clips.length > 0 ? (
+                                <div className="flex flex-col gap-2">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <p className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
+                                      Clips
+                                    </p>
+                                    <span className={`text-xs ${s.textSecondary}`}>
+                                      {track.clips.length} clip{track.clips.length === 1 ? '' : 's'}
+                                    </span>
+                                  </div>
+                                  <div className="grid gap-2 max-h-56 overflow-y-auto">
+                                    {track.clips.map((video) => {
+                                      const videoKey = getSelectedVideoKey(video);
+                                      return (
+                                        <div
+                                          key={videoKey}
+                                          className={`flex items-start justify-between gap-3 ${s.accentBg} px-3 py-2 ${
+                                            isRound ? 'rounded-xl' : 'rounded-sm'
+                                          }`}
+                                        >
+                                          <div className="min-w-0">
+                                            <div className={`truncate text-sm font-semibold ${s.textPrimary}`}>
+                                              {video.workspaceVideo?.name ?? video.file.name}
+                                            </div>
+                                            <div className={`mt-1 text-xs ${s.textSecondary}`}>
+                                              {video.kind === 'workspace_video'
+                                                ? `Workspace video - ${video.workspaceVideo?.relativePath}`
+                                                : 'Local file - prebound for this Replay navigation'}
+                                            </div>
+                                            <div className={`mt-1 text-xs ${s.textSecondary}`}>
+                                              {formatVideoDurationMs(video.durationMs)} -{' '}
+                                              {formatFileSize(video.file.size)}
+                                            </div>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={() => removeVideoFromTrack(track.id, videoKey)}
+                                            className={`shrink-0 text-xs ${s.textSecondary} hover:opacity-70 flex items-center gap-1`}
+                                          >
+                                            <X className="w-3 h-3" />
+                                            Remove
+                                          </button>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              {currentWorkspace ? (
+                                <div className="grid gap-3">
+                                  {workspaceVideoError ? (
+                                    <div className="flex items-start gap-2 text-xs text-red-500">
+                                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                      <span>{workspaceVideoError}</span>
+                                    </div>
+                                  ) : null}
+
+                                  {recommendedWorkspaceVideos.length > 0 ? (
+                                    <div className="flex flex-col gap-2">
+                                      <p className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
+                                        Recommended Workspace Videos
+                                      </p>
+                                      <div className="grid gap-2">
+                                        {recommendedWorkspaceVideos.map((video) => {
+                                          const containingTrack = videoTracks.find((candidate) =>
+                                            candidate.clips.some(
+                                              (entry) =>
+                                                entry.kind === 'workspace_video' &&
+                                                entry.workspaceVideo?.relativePath === video.relativePath,
+                                            ),
+                                          );
+                                          const isSelected = containingTrack?.id === track.id;
+                                          return (
+                                            <button
+                                              key={video.relativePath}
+                                              type="button"
+                                              onClick={() => void handleSelectWorkspaceVideo(video, track.id)}
+                                              className={`flex items-center justify-between gap-3 px-3 py-3 text-left transition-all ${
+                                                isSelected ? `${s.accentBg}` : s.buttonSecondary
+                                              } ${isRound ? 'rounded-xl' : 'rounded-sm'}`}
+                                            >
+                                              <div className="min-w-0">
+                                                <div className={`truncate text-sm font-medium ${s.textPrimary}`}>
+                                                  {video.name}
+                                                </div>
+                                                <div className={`text-xs ${s.textSecondary}`}>
+                                                  {video.relativePath}
+                                                </div>
+                                              </div>
+                                              <span className={`shrink-0 text-xs ${s.textSecondary}`}>
+                                                {isSelected
+                                                  ? 'Added'
+                                                  : containingTrack
+                                                    ? 'Move Here'
+                                                    : 'Add Clip'}
+                                              </span>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  ) : null}
+
+                                  {additionalWorkspaceVideos.length > 0 ? (
+                                    <div className="flex flex-col gap-2">
+                                      <p className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
+                                        Other Workspace Videos
+                                      </p>
+                                      <div className="grid gap-2 max-h-48 overflow-y-auto">
+                                        {additionalWorkspaceVideos.map((video) => {
+                                          const containingTrack = videoTracks.find((candidate) =>
+                                            candidate.clips.some(
+                                              (entry) =>
+                                                entry.kind === 'workspace_video' &&
+                                                entry.workspaceVideo?.relativePath === video.relativePath,
+                                            ),
+                                          );
+                                          const isSelected = containingTrack?.id === track.id;
+                                          return (
+                                            <button
+                                              key={video.relativePath}
+                                              type="button"
+                                              onClick={() => void handleSelectWorkspaceVideo(video, track.id)}
+                                              className={`flex items-center justify-between gap-3 px-3 py-3 text-left transition-all ${
+                                                isSelected ? `${s.accentBg}` : s.buttonSecondary
+                                              } ${isRound ? 'rounded-xl' : 'rounded-sm'}`}
+                                            >
+                                              <div className="min-w-0">
+                                                <div className={`truncate text-sm font-medium ${s.textPrimary}`}>
+                                                  {video.name}
+                                                </div>
+                                                <div className={`text-xs ${s.textSecondary}`}>
+                                                  {video.relativePath}
+                                                </div>
+                                              </div>
+                                              <span className={`shrink-0 text-xs ${s.textSecondary}`}>
+                                                {isSelected
+                                                  ? 'Added'
+                                                  : containingTrack
+                                                    ? 'Move Here'
+                                                    : video.collection === 'incoming'
+                                                      ? 'Incoming'
+                                                      : 'Library'}
+                                              </span>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  ) : workspaceVideoFiles.length === 0 ? (
+                                    <p className={`text-sm ${s.textSecondary}`}>
+                                      No workspace videos found in incoming/video or library/video.
+                                    </p>
+                                  ) : null}
+                                </div>
+                              ) : null}
+
+                              <div className="flex flex-col gap-2">
+                                <p className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
+                                  Local Video Files
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setVideoFilePickerTrackId(track.id);
+                                    videoInputRef.current?.click();
+                                  }}
+                                  className={`inline-flex items-center justify-center gap-2 px-4 py-2 text-sm ${s.buttonSecondary}`}
+                                >
+                                  <Upload className="w-4 h-4" />
+                                  {track.clips.some((video) => video.kind === 'local_file')
+                                    ? 'Add Local Videos'
+                                    : 'Choose Local Videos'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {videoSelectionError ? (
                   <div className="flex items-start gap-2 text-xs text-red-500">
@@ -1006,12 +1368,17 @@ export default function NewSessionPage() {
                   ref={videoInputRef}
                   type="file"
                   accept="video/*"
+                  multiple
                   className="hidden"
                   onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) {
-                      void handlePickLocalVideo(file);
+                    const files = Array.from(event.target.files ?? []);
+                    const trackId = videoFilePickerTrackId ?? expandedVideoTrackId;
+                    if (files.length > 0 && trackId) {
+                      void handlePickLocalVideo(files, trackId);
+                    } else if (files.length > 0) {
+                      setVideoSelectionError('Create or expand a video track before adding clips.');
                     }
+                    setVideoFilePickerTrackId(null);
                     event.currentTarget.value = '';
                   }}
                 />

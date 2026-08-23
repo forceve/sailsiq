@@ -507,11 +507,15 @@ const routes: Record<string, { handler: RouteHandler }> = {
           : 0;
       const nextVideo: SessionVideo = {
         id: genId(),
+        videoTrackId: data.videoTrackId?.trim() || undefined,
+        videoTrackName: data.videoTrackName?.trim() || undefined,
         videoType: data.videoType ?? 'flat',
         url: data.videoUrl.trim(),
         label: data.label?.trim() || undefined,
         offsetMs,
         ...(data.sync ? { sync: { ...data.sync, offsetMs, updatedAt: now } } : {}),
+        placementSource: data.placementSource,
+        placementConfidence: data.placementConfidence,
         linkedAt: now,
         updatedAt: now,
       };
@@ -532,6 +536,11 @@ const routes: Record<string, { handler: RouteHandler }> = {
         offsetMs?: number;
         sync?: SessionVideo['sync'];
         videoId?: string;
+        videoType?: SessionVideo['videoType'];
+        videoTrackId?: string;
+        videoTrackName?: string;
+        placementSource?: SessionVideo['placementSource'];
+        placementConfidence?: SessionVideo['placementConfidence'];
       };
       const targetIndex = data.videoId
         ? list.findIndex((video) => video.id === data.videoId)
@@ -547,12 +556,25 @@ const routes: Record<string, { handler: RouteHandler }> = {
           : current.offsetMs;
       const nextVideo: SessionVideo = {
         ...current,
+        ...(data.videoType === 'flat' || data.videoType === '360'
+          ? { videoType: data.videoType }
+          : {}),
+        ...(data.videoTrackId !== undefined
+          ? { videoTrackId: data.videoTrackId.trim() || undefined }
+          : {}),
+        ...(data.videoTrackName !== undefined
+          ? { videoTrackName: data.videoTrackName.trim() || undefined }
+          : {}),
         offsetMs,
         ...(data.sync
           ? { sync: { ...data.sync, offsetMs, updatedAt: now } }
           : current.sync
             ? { sync: { ...current.sync, offsetMs, updatedAt: now } }
             : {}),
+        ...(data.placementSource !== undefined ? { placementSource: data.placementSource } : {}),
+        ...(data.placementConfidence !== undefined
+          ? { placementConfidence: data.placementConfidence }
+          : {}),
         updatedAt: now,
       };
 

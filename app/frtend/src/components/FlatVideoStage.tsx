@@ -8,6 +8,7 @@ const SOFT_SYNC_THRESHOLD_MS = 220;
 const MEDIUM_SYNC_THRESHOLD_MS = 500;
 const HARD_SYNC_THRESHOLD_MS = 1200;
 const WAITING_OVERLAY_DELAY_MS = 250;
+const VIDEO_CLOCK_EMIT_INTERVAL_MS = 100;
 
 function getMediaErrorMessage(video: HTMLVideoElement): string {
   switch (video.error?.code) {
@@ -57,17 +58,30 @@ export default function FlatVideoStage({
   const onDurationChangeRef = useRef(onDurationChange);
   const onReadyChangeRef = useRef(onReadyChange);
   const onErrorChangeRef = useRef(onErrorChange);
+  const lastClockEmitRef = useRef(0);
+  const targetRef = useRef({
+    targetTimeMs,
+    isPlaying,
+    playbackSpeed,
+    updatedAtMs: performance.now(),
+  });
   const [isReady, setIsReady] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasEnded, setHasEnded] = useState(false);
   const durationMsRef = useRef(0);
 
-  const targetSeconds = clamp(
-    targetTimeMs / 1000,
-    0,
-    durationMsRef.current > 0 ? durationMsRef.current / 1000 : Number.MAX_SAFE_INTEGER,
-  );
+  const getProjectedTargetTimeMs = () => {
+    const target = targetRef.current;
+    const projectedMs = target.isPlaying
+      ? target.targetTimeMs + (performance.now() - target.updatedAtMs) * target.playbackSpeed
+      : target.targetTimeMs;
+    return clamp(
+      projectedMs,
+      0,
+      durationMsRef.current > 0 ? durationMsRef.current : Number.MAX_SAFE_INTEGER,
+    );
+  };
 
   const clearWaitingOverlayTimer = () => {
     if (waitingTimerRef.current !== null) {
@@ -95,6 +109,15 @@ export default function FlatVideoStage({
     onReadyChangeRef.current = onReadyChange;
     onErrorChangeRef.current = onErrorChange;
   }, [onClockChange, onDurationChange, onErrorChange, onReadyChange]);
+
+  useEffect(() => {
+    targetRef.current = {
+      targetTimeMs,
+      isPlaying,
+      playbackSpeed,
+      updatedAtMs: performance.now(),
+    };
+  }, [isPlaying, playbackSpeed, targetTimeMs]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -167,18 +190,19 @@ export default function FlatVideoStage({
     const video = videoRef.current;
     if (!video || !isReady) return;
 
-    const driftMs = targetTimeMs - video.currentTime * 1000;
+    const projectedTargetTimeMs = getProjectedTargetTimeMs();
+    const driftMs = projectedTargetTimeMs - video.currentTime * 1000;
     if (!isPlaying) {
       if (Math.abs(driftMs) > IMMEDIATE_SEEK_THRESHOLD_MS) {
-        video.currentTime = targetSeconds;
+        video.currentTime = projectedTargetTimeMs / 1000;
       }
       return;
     }
 
     if (Math.abs(driftMs) > HARD_SYNC_THRESHOLD_MS) {
-      video.currentTime = targetSeconds;
+      video.currentTime = projectedTargetTimeMs / 1000;
     }
-  }, [isPlaying, isReady, targetSeconds, targetTimeMs]);
+  }, [isPlaying, isReady, targetTimeMs]);
 
   useEffect(() => {
     if (durationMsRef.current <= 0) return;
@@ -191,7 +215,8 @@ export default function FlatVideoStage({
     const video = videoRef.current;
     if (!video || !isReady) return undefined;
 
-    const driftMs = targetTimeMs - video.currentTime * 1000;
+    const projectedTargetTimeMs = getProjectedTargetTimeMs();
+    const driftMs = projectedTargetTimeMs - video.currentTime * 1000;
     const nextPlaybackRate = isPlaying
       ? getAdjustedPlaybackRate(playbackSpeed, driftMs)
       : playbackSpeed;
@@ -200,7 +225,7 @@ export default function FlatVideoStage({
     }
 
     const atEnd =
-      durationMsRef.current > 0 && targetTimeMs >= durationMsRef.current - 80;
+      durationMsRef.current > 0 && projectedTargetTimeMs >= durationMsRef.current - 80;
 
     if (isPlaying) {
       if (hasEnded || atEnd) {
@@ -225,8 +250,12 @@ export default function FlatVideoStage({
     const video = videoRef.current;
     if (!video) return undefined;
 
-    const tick = () => {
-      onClockChangeRef.current?.(video.currentTime * 1000);
+    lastClockEmitRef.current = 0;
+    const tick = (now: number) => {
+      if (now - lastClockEmitRef.current >= VIDEO_CLOCK_EMIT_INTERVAL_MS) {
+        lastClockEmitRef.current = now;
+        onClockChangeRef.current?.(video.currentTime * 1000);
+      }
       rafRef.current = requestAnimationFrame(tick);
     };
 

@@ -7,7 +7,7 @@ import SessionVideoStage from '@/components/SessionVideoStage';
 import WorkspaceLensLayer from '@/components/WorkspaceLensLayer';
 import WorkspaceMapStage from '@/components/WorkspaceMapStage';
 import WorkspaceTelemetryStage from '@/components/WorkspaceTelemetryStage';
-import { sessionApi, trackApi, eventApi, markApi } from '@/services/api';
+import { sessionApi, eventApi, markApi } from '@/services/api';
 import { useTheme } from '@/theme/ThemeContext';
 import type {
   Mark,
@@ -114,7 +114,7 @@ export default function ReplayVideoCompanionPage() {
   const [videoStageReady, setVideoStageReady] = useState(false);
   const [videoStageError, setVideoStageError] = useState<string | null>(null);
   const [videoDurationsByKey, setVideoDurationsByKey] = useState<Record<string, number>>({});
-  const [localVideo, setLocalVideo] = useState<LocalCompanionVideo | null>(null);
+  const [localVideos, setLocalVideos] = useState<LocalCompanionVideo[]>([]);
   const [surfaceLayoutMode, setSurfaceLayoutMode] =
     useState<WorkspaceStageLayoutMode>('full');
   const [primaryStageContent, setPrimaryStageContent] =
@@ -138,19 +138,18 @@ export default function ReplayVideoCompanionPage() {
 
   const channelRef = useRef<BroadcastChannel | null>(null);
   const lastHostMessageAtRef = useRef(0);
-  const localVideoObjectUrlRef = useRef<string | null>(null);
+  const localVideosRef = useRef<LocalCompanionVideo[]>([]);
   const didInitializeStageContentRef = useRef(false);
   const requestedRole = getRequestedSurfaceRole(searchParams);
 
   useEffect(() => {
-    localVideoObjectUrlRef.current = localVideo?.objectUrl ?? null;
-  }, [localVideo?.objectUrl]);
+    localVideosRef.current = localVideos;
+  }, [localVideos]);
 
   useEffect(() => {
     return () => {
-      if (localVideoObjectUrlRef.current) {
-        URL.revokeObjectURL(localVideoObjectUrlRef.current);
-      }
+      localVideosRef.current.forEach((video) => URL.revokeObjectURL(video.objectUrl));
+      localVideosRef.current = [];
     };
   }, []);
 
@@ -166,25 +165,14 @@ export default function ReplayVideoCompanionPage() {
         markApi.list(sessionId),
       ]);
 
-      let nextTelemetry: TrackPoint[] = [];
-      try {
-        const tracks = await trackApi.list(sessionId);
-        const primaryTrack = tracks.find((track) => track.role === 'primary') ?? tracks[0];
-        nextTelemetry = primaryTrack
-          ? await trackApi.getPoints(sessionId, primaryTrack.id)
-          : [];
-      } catch {
-        nextTelemetry = await trackApi.get(sessionId).catch(() => []);
-      }
-
-      return { nextSession, nextTelemetry, nextEvents, nextMarks };
+      return { nextSession, nextEvents, nextMarks };
     };
 
     load()
-      .then(({ nextSession, nextTelemetry, nextEvents, nextMarks }) => {
+      .then(({ nextSession, nextEvents, nextMarks }) => {
         if (cancelled) return;
         setSession(nextSession);
-        setTelemetry(nextTelemetry);
+        setTelemetry([]);
         setEvents(nextEvents);
         setMarks(nextMarks);
         setLoading(false);
@@ -235,36 +223,43 @@ export default function ReplayVideoCompanionPage() {
           setHostState(event.data.state);
           return;
         case 'host_local_video': {
-          setLocalVideo((prev) => {
-            if (prev && prev.signature === event.data.signature) {
-              return {
-                ...prev,
-                key: event.data.key ?? prev.key,
-                label: event.data.label ?? prev.label,
-                videoType: event.data.videoType,
-                offsetMs: event.data.offsetMs,
-                sync: event.data.sync,
-              };
+          setLocalVideos((prev) => {
+            const existing = prev.find((video) => video.signature === event.data.signature);
+            if (existing) {
+              return prev.map((video) =>
+                video.signature === event.data.signature
+                  ? {
+                      ...video,
+                      key: event.data.key ?? video.key,
+                      label: event.data.label ?? video.label,
+                      videoType: event.data.videoType,
+                      offsetMs: event.data.offsetMs,
+                      sync: event.data.sync,
+                    }
+                  : video,
+              );
             }
 
             const objectUrl = URL.createObjectURL(event.data.file);
-            if (prev) URL.revokeObjectURL(prev.objectUrl);
-            return {
-              key: event.data.key,
-              signature: event.data.signature,
-              objectUrl,
-              label: event.data.label ?? event.data.file.name,
-              videoType: event.data.videoType,
-              offsetMs: event.data.offsetMs,
-              sync: event.data.sync,
-            };
+            return [
+              ...prev,
+              {
+                key: event.data.key,
+                signature: event.data.signature,
+                objectUrl,
+                label: event.data.label ?? event.data.file.name,
+                videoType: event.data.videoType,
+                offsetMs: event.data.offsetMs,
+                sync: event.data.sync,
+              },
+            ];
           });
           return;
         }
         case 'host_clear_local_video':
-          setLocalVideo((prev) => {
-            if (prev) URL.revokeObjectURL(prev.objectUrl);
-            return null;
+          setLocalVideos((prev) => {
+            prev.forEach((video) => URL.revokeObjectURL(video.objectUrl));
+            return [];
           });
           return;
         default:
@@ -316,16 +311,20 @@ export default function ReplayVideoCompanionPage() {
     const nextVideo = hostState?.video;
     if (!nextVideo || nextVideo.origin !== 'local') return;
 
-    setLocalVideo((prev) => {
-      if (!prev || prev.signature !== nextVideo.signature) return prev;
-      return {
-        ...prev,
-        key: nextVideo.key ?? prev.key,
-        label: nextVideo.label ?? prev.label,
-        videoType: nextVideo.videoType,
-        offsetMs: nextVideo.offsetMs,
-        sync: nextVideo.sync,
-      };
+    setLocalVideos((prev) => {
+      if (!prev.some((video) => video.signature === nextVideo.signature)) return prev;
+      return prev.map((video) =>
+        video.signature === nextVideo.signature
+          ? {
+              ...video,
+              key: nextVideo.key ?? video.key,
+              label: nextVideo.label ?? video.label,
+              videoType: nextVideo.videoType,
+              offsetMs: nextVideo.offsetMs,
+              sync: nextVideo.sync,
+            }
+          : video,
+      );
     });
   }, [hostState?.video]);
 
@@ -342,7 +341,11 @@ export default function ReplayVideoCompanionPage() {
   const activeTelemetry =
     hostState?.activeTrackPoints && hostState.activeTrackPoints.length > 0
       ? hostState.activeTrackPoints
-      : telemetry;
+      : telemetry.length > 0
+        ? telemetry
+        : hostState?.currentPoint
+          ? [hostState.currentPoint]
+          : [];
   const workspaceWindowEffective = useMemo(() => {
     const hostWindow = hostState?.workspaceWindow;
     if (totalDuration <= 0) return { startMs: 0, endMs: 0 };
@@ -421,7 +424,10 @@ export default function ReplayVideoCompanionPage() {
 
     videoDescriptors.forEach((descriptor) => {
       if (descriptor.origin === 'local') {
-        if (!localVideo || localVideo.signature !== descriptor.signature) return;
+        const localVideo = localVideos.find(
+          (video) => video.signature === descriptor.signature,
+        );
+        if (!localVideo) return;
         nextVideos.push({
           key: descriptor.key,
           origin: 'local',
@@ -450,34 +456,87 @@ export default function ReplayVideoCompanionPage() {
     });
 
     return nextVideos;
-  }, [localVideo, videoDescriptors]);
+  }, [localVideos, videoDescriptors]);
+
+  const videoTimelineTracks = useMemo(() => {
+    const byTrack = new Map<
+      string,
+      { id: string; label: string; clips: WorkspaceVideoDescriptor[] }
+    >();
+
+    videoDescriptors.forEach((descriptor, index) => {
+      const trackId = descriptor.videoTrackId ?? descriptor.key;
+      const trackName =
+        descriptor.videoTrackName ??
+        (descriptor.videoTrackId ? 'Video Track' : `Video Track ${index + 1}`);
+      const existing = byTrack.get(trackId);
+      if (existing) {
+        existing.clips.push(descriptor);
+        return;
+      }
+      byTrack.set(trackId, {
+        id: trackId,
+        label: trackName,
+        clips: [descriptor],
+      });
+    });
+
+    return Array.from(byTrack.values()).map((track) => ({
+      ...track,
+      clips: [...track.clips].sort((a, b) => a.offsetMs - b.offsetMs),
+    }));
+  }, [videoDescriptors]);
+
+  const resolveVideoDescriptorForStageKey = useCallback(
+    (key: string | null): WorkspaceVideoDescriptor | null => {
+      if (!key) return null;
+      const direct = videoDescriptors.find((descriptor) => descriptor.key === key);
+      if (direct) return direct;
+
+      const track = videoTimelineTracks.find((item) => item.id === key);
+      if (!track) return null;
+      const coveringClip = track.clips.find((clip) => {
+        const durationMs = videoDurationsByKey[clip.key] ?? 0;
+        return (
+          durationMs > 0 &&
+          currentTime >= clip.offsetMs &&
+          currentTime < clip.offsetMs + durationMs
+        );
+      });
+      if (coveringClip) return coveringClip;
+
+      if (hostState?.video?.videoTrackId === key) return hostState.video;
+      return track.clips[0] ?? null;
+    },
+    [currentTime, hostState?.video, videoDescriptors, videoDurationsByKey, videoTimelineTracks],
+  );
 
   const stageContentOptions = useMemo(
     () => [
       { value: 'map' as WorkspaceStageContent, label: 'Map' },
       { value: 'telemetry' as WorkspaceStageContent, label: 'Telemetry' },
-      ...videoDescriptors.map((video, index) => ({
-        value: `video:${video.key}` as WorkspaceStageContent,
-        label: `Video ${index + 1}: ${video.label ?? video.url ?? 'Local video'}`,
+      ...videoTimelineTracks.map((track, index) => ({
+        value: `video:${track.id}` as WorkspaceStageContent,
+        label: `Video Track ${index + 1}: ${track.label}`,
       })),
     ],
-    [videoDescriptors],
+    [videoTimelineTracks],
   );
 
   useEffect(() => {
     if (didInitializeStageContentRef.current) return;
-    if (requestedRole === 'video' && videoDescriptors.length === 0) return;
+    if (requestedRole === 'video' && videoTimelineTracks.length === 0) return;
 
     const defaultContent: WorkspaceStageContent =
-      requestedRole === 'video' && videoDescriptors[0]
-        ? `video:${videoDescriptors[0].key}`
+      requestedRole === 'video' && videoTimelineTracks[0]
+        ? `video:${videoTimelineTracks[0].id}`
         : requestedRole === 'telemetry'
           ? 'telemetry'
           : 'map';
 
     setPrimaryStageContent(defaultContent);
     didInitializeStageContentRef.current = true;
-  }, [requestedRole, videoDescriptors]);
+  }, [requestedRole, videoTimelineTracks]);
 
   useEffect(() => {
     const validContent = new Set(stageContentOptions.map((option) => option.value));
@@ -626,6 +685,9 @@ export default function ReplayVideoCompanionPage() {
         }}
         includeVmgToWind
         windDir={windDir}
+        telemetryDatasets={hostState?.telemetryDatasets ?? []}
+        telemetryWindow={workspaceWindowEffective}
+        telemetryTimeOriginMs={workspaceWindowEffective.startMs}
       />
     ),
     [
@@ -643,8 +705,10 @@ export default function ReplayVideoCompanionPage() {
   const renderVideoStageContent = useCallback(
     (content: WorkspaceStageContent) => {
       const videoKey = videoKeyFromStageContent(content);
-      const descriptor = videoDescriptors.find((video) => video.key === videoKey) ?? null;
-      const video = playableVideos.find((item) => item.key === videoKey) ?? null;
+      const descriptor = resolveVideoDescriptorForStageKey(videoKey);
+      const video = descriptor
+        ? playableVideos.find((item) => item.key === descriptor.key) ?? null
+        : null;
 
       if (!videoKey || !descriptor) {
         return (
@@ -743,11 +807,11 @@ export default function ReplayVideoCompanionPage() {
       hostState?.syncDialogOpen,
       hostState?.video?.key,
       playableVideos,
+      resolveVideoDescriptorForStageKey,
       selectedEvent,
       selectedMark,
       session?.name,
       surfaceLayoutMode,
-      videoDescriptors,
       windDir,
       windSpeed,
     ],

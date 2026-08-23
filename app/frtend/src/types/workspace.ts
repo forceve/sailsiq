@@ -2,6 +2,8 @@ import type {
   SessionEvent,
   TelemetryDataset,
   TrackPoint,
+  VideoPlacementConfidence,
+  VideoPlacementSource,
   VideoSyncBinding,
   VideoType,
   WorkspaceMode,
@@ -53,11 +55,15 @@ export interface WorkspaceVideoDescriptor {
   key: string;
   origin: 'remote' | 'local';
   id?: string;
+  videoTrackId?: string;
+  videoTrackName?: string;
   label?: string;
   url?: string;
   videoType: VideoType;
   offsetMs: number;
   sync?: VideoSyncBinding;
+  placementSource?: VideoPlacementSource;
+  placementConfidence?: VideoPlacementConfidence;
   signature?: string;
 }
 
@@ -208,12 +214,16 @@ export type WorkspaceVideoBindingSource =
 export interface WorkspaceVideoBinding {
   path: string;
   fileName: string;
+  videoTrackId?: string;
+  videoTrackName?: string;
   label?: string;
   sourceKind: WorkspaceVideoBindingSource;
   storageMode: WorkspaceAssetStorageMode;
   videoType: VideoType;
   offsetMs: number;
   sync?: VideoSyncBinding;
+  placementSource?: VideoPlacementSource;
+  placementConfidence?: VideoPlacementConfidence;
   copiedToWorkspace: boolean;
   confirmed: boolean;
   boundAt: string;
@@ -225,14 +235,19 @@ export interface ReplayPreboundVideoState {
   file?: File;
   relativePath?: string;
   label?: string;
+  videoTrackId?: string;
+  videoTrackName?: string;
   videoType: VideoType;
   offsetMs: number;
   sync?: VideoSyncBinding;
+  placementSource?: VideoPlacementSource;
+  placementConfidence?: VideoPlacementConfidence;
   promptSync: boolean;
 }
 
 export interface ReplayNavigationState {
   preboundVideo?: ReplayPreboundVideoState;
+  preboundVideos?: ReplayPreboundVideoState[];
 }
 
 export interface WorkspaceSessionBindingsManifest {

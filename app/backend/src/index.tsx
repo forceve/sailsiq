@@ -776,9 +776,13 @@ app.post('/api/v1/sessions/:id/video/link', async (c) => {
   const body = await c.req.json<{
     videoUrl?: string;
     videoType?: SessionVideo['videoType'];
+    videoTrackId?: string;
+    videoTrackName?: string;
     label?: string;
     offsetMs?: number;
     sync?: SessionVideo['sync'];
+    placementSource?: SessionVideo['placementSource'];
+    placementConfidence?: SessionVideo['placementConfidence'];
   }>();
   if (!body.videoUrl || body.videoUrl.trim() === '') {
     return c.json(
@@ -795,11 +799,15 @@ app.post('/api/v1/sessions/:id/video/link', async (c) => {
       : 0;
   const nextVideo: SessionVideo = {
     id: genId(),
+    videoTrackId: body.videoTrackId?.trim() || undefined,
+    videoTrackName: body.videoTrackName?.trim() || undefined,
     videoType: body.videoType ?? 'flat',
     url: body.videoUrl.trim(),
     label: body.label?.trim() || undefined,
     offsetMs,
     ...(body.sync ? { sync: { ...body.sync, offsetMs, updatedAt: now } } : {}),
+    placementSource: body.placementSource,
+    placementConfidence: body.placementConfidence,
     linkedAt: now,
     updatedAt: now,
   };
@@ -835,6 +843,11 @@ app.post('/api/v1/sessions/:id/video/sync', async (c) => {
     offsetMs?: number;
     sync?: SessionVideo['sync'];
     videoId?: string;
+    videoType?: SessionVideo['videoType'];
+    videoTrackId?: string;
+    videoTrackName?: string;
+    placementSource?: SessionVideo['placementSource'];
+    placementConfidence?: SessionVideo['placementConfidence'];
   }>();
   const targetIndex = body.videoId
     ? videos.findIndex((video) => video.id === body.videoId)
@@ -855,12 +868,25 @@ app.post('/api/v1/sessions/:id/video/sync', async (c) => {
       : current.offsetMs;
   const nextVideo: SessionVideo = {
     ...current,
+    ...(body.videoType === 'flat' || body.videoType === '360'
+      ? { videoType: body.videoType }
+      : {}),
+    ...(body.videoTrackId !== undefined
+      ? { videoTrackId: body.videoTrackId.trim() || undefined }
+      : {}),
+    ...(body.videoTrackName !== undefined
+      ? { videoTrackName: body.videoTrackName.trim() || undefined }
+      : {}),
     offsetMs,
     ...(body.sync
       ? { sync: { ...body.sync, offsetMs, updatedAt: now } }
       : current.sync
         ? { sync: { ...current.sync, offsetMs, updatedAt: now } }
         : {}),
+    ...(body.placementSource !== undefined ? { placementSource: body.placementSource } : {}),
+    ...(body.placementConfidence !== undefined
+      ? { placementConfidence: body.placementConfidence }
+      : {}),
     updatedAt: now,
   };
 

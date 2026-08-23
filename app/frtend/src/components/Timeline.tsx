@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Play, Pause, Clock } from 'lucide-react';
 import { useTheme } from '@/theme/ThemeContext';
 import { clamp, formatTimestamp } from '@/utils/formatters';
@@ -9,12 +9,19 @@ export interface WorkspaceWindowMs {
   endMs: number;
 }
 
-export interface TimelineVideoTrack {
+export interface TimelineVideoClip {
   id: string;
   label: string;
   offsetMs: number;
   durationMs: number;
-  active?: boolean;
+}
+
+export interface TimelineVideoTrack {
+  id: string;
+  label: string;
+  clips?: TimelineVideoClip[];
+  offsetMs?: number;
+  durationMs?: number;
 }
 
 interface TimelineProps {
@@ -22,15 +29,15 @@ interface TimelineProps {
   totalDuration: number;
   workspaceWindow: WorkspaceWindowMs;
   onChangeWorkspace: (next: WorkspaceWindowMs) => void;
-  /** Committed video offset (session time at video t=0) */
+  /** Committed video offset (session time at video t=0) — legacy fallback when no clips */
   videoOffsetMs: number;
   videoDurationMs: number;
   videoTracks?: TimelineVideoTrack[];
-  /** While dragging video bar, preview offset; null = use videoOffsetMs */
-  draftVideoOffsetMs: number | null;
-  onDraftVideoOffset: (ms: number | null) => void;
-  onCommitVideoOffset: (ms: number, videoId?: string) => void;
-  onSelectVideoTrack?: (videoId: string) => void;
+  /** Timeline drag preview: which clip key and draft session-time offset */
+  draftVideoClip: { clipKey: string; ms: number } | null;
+  onDraftVideoClipOffset: (next: { clipKey: string; ms: number } | null) => void;
+  /** Always scoped to the edited clip bar */
+  onCommitVideoClipOffset: (ms: number, clipKey: string) => void;
   showVideoTrack: boolean;
   isPlaying: boolean;
   playbackSpeed: number;
@@ -49,10 +56,14 @@ interface TimelineProps {
   syncLabel?: string;
 }
 
+type NormalizedTimelineVideoTrack = TimelineVideoTrack & {
+  clips: TimelineVideoClip[];
+};
+
 const MIN_SPEED = 0.5;
-const MAX_SPEED = 10;
+const MAX_SPEED = 50;
 const SPEED_STEP = 0.1;
-const SPEED_PRESETS = [0.5, 1, 2, 5, 10] as const;
+const SPEED_PRESETS = [0.5, 1, 2, 5, 10, 20, 50] as const;
 const MIN_WORKSPACE_SPAN_MS = 5000;
 const GLOBAL_HANDLE_PX = 10;
 const JUMP_CONTROLS = [
@@ -62,15 +73,20 @@ const JUMP_CONTROLS = [
   { label: '+30s', deltaMs: 30000 },
 ] as const;
 
-/** Match video drag strip: semi-transparent violet */
+/** Video clip bar: semi-transparent violet (lighter default, stronger on hover) — not fully transparent */
 const VIDEO_NUDGE_BTN_CLASS =
-  'shrink-0 px-1.5 py-0.5 min-w-[2.35rem] text-[10px] font-mono leading-tight rounded border border-violet-400/90 bg-violet-500/35 text-white/90 hover:bg-violet-500/50 active:bg-violet-500/60 disabled:opacity-40 disabled:pointer-events-none disabled:cursor-not-allowed';
+  'shrink-0 px-1.5 py-0.5 min-w-[2.35rem] text-[10px] font-mono leading-tight rounded border border-violet-400/85 bg-violet-500/35 text-white/95 hover:bg-violet-500/50 active:bg-violet-500/60 disabled:opacity-40 disabled:pointer-events-none disabled:cursor-not-allowed';
 const VIDEO_NUDGE_TOOLBAR_CLASS =
-  'pointer-events-none absolute bottom-full z-20 mb-2 flex w-[9rem] -translate-x-1/2 items-center justify-center gap-1 rounded-full border border-violet-300/30 bg-stone-950/88 px-1.5 py-1 shadow-lg opacity-0 backdrop-blur-sm transition duration-150 group-hover:opacity-100 group-hover:pointer-events-auto';
+  'pointer-events-none absolute bottom-full left-1/2 z-30 flex w-[8rem] -translate-x-1/2 items-center justify-center gap-0.5 rounded-full border border-violet-300/30 bg-stone-950/88 px-1 py-0.5 shadow-md opacity-0 backdrop-blur-sm transition duration-150 group-hover/clip:pointer-events-auto group-hover/clip:opacity-100';
 const VIDEO_NUDGE_TOOLBAR_BTN_CLASS =
-  'inline-flex min-w-[1.9rem] items-center justify-center rounded-full px-2 py-1 text-[10px] font-mono leading-none text-white/88 transition hover:bg-violet-500/35 active:bg-violet-500/45 disabled:opacity-40 disabled:pointer-events-none disabled:cursor-not-allowed';
+  'inline-flex min-h-0 min-w-[1.35rem] items-center justify-center rounded-full bg-violet-500/38 px-1 py-0.5 text-[9px] font-mono leading-none text-white/95 transition hover:bg-violet-500/52 active:bg-violet-500/62 disabled:opacity-40 disabled:pointer-events-none disabled:cursor-not-allowed';
 const TRACK_LABEL_WIDTH_CLASS = 'hidden sm:flex w-28 md:w-32 shrink-0';
 const EVENT_ENTRY_HIGHLIGHT_PADDING_MS = 4000;
+const TIMELINE_TRACK_BAR_HEIGHT_PX = 5.33;
+const VIDEO_CLIP_LANE_HEIGHT_PX = 12;
+const VIDEO_CLIP_TRACK_PADDING_PX = 4;
+const MIN_VIDEO_CLIP_VISUAL_RATIO = 0.008;
+const VIDEO_CLIP_VISUAL_GAP_RATIO = 0.0025;
 
 function eventMarkerClass(type: SessionEvent['type']): string {
   switch (type) {
@@ -127,10 +143,9 @@ export default function Timeline({
   videoOffsetMs,
   videoDurationMs,
   videoTracks,
-  draftVideoOffsetMs,
-  onDraftVideoOffset,
-  onCommitVideoOffset,
-  onSelectVideoTrack,
+  draftVideoClip,
+  onDraftVideoClipOffset,
+  onCommitVideoClipOffset,
   showVideoTrack,
   isPlaying,
   playbackSpeed,
@@ -159,25 +174,38 @@ export default function Timeline({
   const [scrubTime, setScrubTime] = useState<number | null>(null);
 
   const workspaceDurationMs = Math.max(0, workspaceWindow.endMs - workspaceWindow.startMs);
-  const normalizedVideoTracks =
+  const normalizedVideoTracks: NormalizedTimelineVideoTrack[] =
     videoTracks && videoTracks.length > 0
-      ? videoTracks
+      ? videoTracks.map((track) => ({
+          ...track,
+          clips:
+            track.clips && track.clips.length > 0
+              ? track.clips
+              : [
+                  {
+                    id: track.id,
+                    label: track.label,
+                    offsetMs: track.offsetMs ?? videoOffsetMs,
+                    durationMs: track.durationMs ?? videoDurationMs,
+                  },
+                ],
+        }))
       : showVideoTrack
         ? [
             {
               id: 'active',
               label: 'Video',
-              offsetMs: videoOffsetMs,
-              durationMs: videoDurationMs,
-              active: true,
+              clips: [
+                {
+                  id: 'active',
+                  label: 'Video',
+                  offsetMs: videoOffsetMs,
+                  durationMs: videoDurationMs,
+                },
+              ],
             },
           ]
         : [];
-  const activeVideoTrack =
-    normalizedVideoTracks.find((track) => track.active) ?? normalizedVideoTracks[0] ?? null;
-  const effectiveVideoOffset = draftVideoOffsetMs ?? activeVideoTrack?.offsetMs ?? videoOffsetMs;
-  const effectiveVideoDurationMs = activeVideoTrack?.durationMs ?? videoDurationMs;
-
   const displayGlobalTime = scrubTime ?? currentTime;
 
   const workspaceLocalMs =
@@ -193,16 +221,6 @@ export default function Timeline({
 
   const windowStartRatio = totalDuration > 0 ? workspaceWindow.startMs / totalDuration : 0;
   const windowEndRatio = totalDuration > 0 ? workspaceWindow.endMs / totalDuration : 0;
-
-  const videoStartRatio =
-    totalDuration > 0 ? clamp(effectiveVideoOffset / totalDuration, 0, 1) : 0;
-  const videoEndRatio =
-    totalDuration > 0 && effectiveVideoDurationMs > 0
-      ? clamp((effectiveVideoOffset + effectiveVideoDurationMs) / totalDuration, 0, 1)
-      : videoStartRatio;
-  const videoLeftPct = `${(videoStartRatio * 100).toFixed(2)}%`;
-  const videoWidthPct = `${(Math.max(0, videoEndRatio - videoStartRatio) * 100).toFixed(2)}%`;
-  const videoCenterPct = `${(((videoStartRatio + videoEndRatio) / 2) * 100).toFixed(2)}%`;
 
   const isCyber = themeId === 'cyber';
   const isRound = themeId === 'nordic' || themeId === 'frost' || themeId === 'neumorph';
@@ -352,6 +370,8 @@ export default function Timeline({
     startWindow: WorkspaceWindowMs;
     grabOffsetMs?: number;
   } | null>(null);
+  const workspaceChangeFrameRef = useRef<number>(0);
+  const pendingWorkspaceChangeRef = useRef<WorkspaceWindowMs | null>(null);
 
   const minSpanMs = Math.min(MIN_WORKSPACE_SPAN_MS, Math.max(0, totalDuration));
 
@@ -375,6 +395,35 @@ export default function Timeline({
       return { startMs, endMs };
     },
     [totalDuration],
+  );
+
+  const flushWorkspaceChange = useCallback(
+    (next?: WorkspaceWindowMs) => {
+      const pending = next ?? pendingWorkspaceChangeRef.current;
+      if (!pending) return;
+
+      if (workspaceChangeFrameRef.current) {
+        cancelAnimationFrame(workspaceChangeFrameRef.current);
+        workspaceChangeFrameRef.current = 0;
+      }
+
+      pendingWorkspaceChangeRef.current = null;
+      onChangeWorkspace(pending);
+    },
+    [onChangeWorkspace],
+  );
+
+  const scheduleWorkspaceChange = useCallback(
+    (next: WorkspaceWindowMs) => {
+      pendingWorkspaceChangeRef.current = next;
+      if (workspaceChangeFrameRef.current) return;
+
+      workspaceChangeFrameRef.current = requestAnimationFrame(() => {
+        workspaceChangeFrameRef.current = 0;
+        flushWorkspaceChange();
+      });
+    },
+    [flushWorkspaceChange],
   );
 
   const hitTestGlobal = useCallback(
@@ -416,7 +465,7 @@ export default function Timeline({
         if (t < nw.startMs || t > nw.endMs) {
           const nextStart = clamp(t - span / 2, 0, Math.max(0, totalDuration - span));
           nw = clampWindow(nextStart, nextStart + span);
-          onChangeWorkspace(nw);
+          flushWorkspaceChange(nw);
         }
         onSeek(clamp(t, nw.startMs, nw.endMs));
         e.preventDefault();
@@ -438,7 +487,7 @@ export default function Timeline({
       e.currentTarget.setPointerCapture(e.pointerId);
       e.preventDefault();
     },
-    [clampWindow, hitTestGlobal, onChangeWorkspace, onSeek, totalDuration, workspaceWindow],
+    [clampWindow, flushWorkspaceChange, hitTestGlobal, onSeek, totalDuration, workspaceWindow],
   );
 
   const handleGlobalPointerMove = useCallback(
@@ -457,7 +506,7 @@ export default function Timeline({
         const tNow = timeFromClientX(el, e.clientX, totalDuration);
         const grab = drag.grabOffsetMs ?? 0;
         const nextStart = clamp(tNow - grab, 0, Math.max(0, totalDuration - span));
-        onChangeWorkspace(clampWindow(nextStart, nextStart + span));
+        scheduleWorkspaceChange(clampWindow(nextStart, nextStart + span));
         return;
       }
 
@@ -467,7 +516,7 @@ export default function Timeline({
           0,
           drag.startWindow.endMs - minSpanMs,
         );
-        onChangeWorkspace(clampWindow(nextStart, drag.startWindow.endMs));
+        scheduleWorkspaceChange(clampWindow(nextStart, drag.startWindow.endMs));
         return;
       }
 
@@ -477,42 +526,80 @@ export default function Timeline({
           drag.startWindow.startMs + minSpanMs,
           totalDuration,
         );
-        onChangeWorkspace(clampWindow(drag.startWindow.startMs, nextEnd));
+        scheduleWorkspaceChange(clampWindow(drag.startWindow.startMs, nextEnd));
       }
     },
-    [clampWindow, minSpanMs, onChangeWorkspace, totalDuration],
+    [clampWindow, minSpanMs, scheduleWorkspaceChange, totalDuration],
   );
 
   const handleGlobalPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const drag = globalDragRef.current;
     if (!drag || drag.pointerId !== e.pointerId) return;
+    flushWorkspaceChange();
     globalDragRef.current = null;
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
     }
-  }, []);
+  }, [flushWorkspaceChange]);
 
   const videoDragRef = useRef<{
     pointerId: number;
     originOffsetMs: number;
     startClientX: number;
+    clipKey: string;
   } | null>(null);
+  const videoDraftFrameRef = useRef<number>(0);
+  const pendingVideoDraftRef = useRef<{ clipKey: string; ms: number } | null>(null);
+
+  const flushVideoDraft = useCallback(
+    (next?: { clipKey: string; ms: number } | null) => {
+      const pending = next === undefined ? pendingVideoDraftRef.current : next;
+
+      if (videoDraftFrameRef.current) {
+        cancelAnimationFrame(videoDraftFrameRef.current);
+        videoDraftFrameRef.current = 0;
+      }
+
+      pendingVideoDraftRef.current = null;
+      onDraftVideoClipOffset(pending);
+    },
+    [onDraftVideoClipOffset],
+  );
+
+  const scheduleVideoDraft = useCallback(
+    (next: { clipKey: string; ms: number }) => {
+      pendingVideoDraftRef.current = next;
+      if (videoDraftFrameRef.current) return;
+
+      videoDraftFrameRef.current = requestAnimationFrame(() => {
+        videoDraftFrameRef.current = 0;
+        flushVideoDraft();
+      });
+    },
+    [flushVideoDraft],
+  );
 
   const handleVideoBarPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLButtonElement>) => {
-      if (!showVideoTrack || totalDuration <= 0 || effectiveVideoDurationMs <= 0) return;
+    (
+      e: React.PointerEvent<HTMLButtonElement>,
+      clipKey: string,
+      clipOffsetMs: number,
+      clipDurationMs: number,
+    ) => {
+      if (!showVideoTrack || totalDuration <= 0 || clipDurationMs <= 0) return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       e.stopPropagation();
       videoDragRef.current = {
         pointerId: e.pointerId,
-        originOffsetMs: effectiveVideoOffset,
+        originOffsetMs: clipOffsetMs,
         startClientX: e.clientX,
+        clipKey,
       };
-      onDraftVideoOffset(effectiveVideoOffset);
+      flushVideoDraft({ clipKey, ms: clipOffsetMs });
       e.currentTarget.setPointerCapture(e.pointerId);
       e.preventDefault();
     },
-    [effectiveVideoDurationMs, effectiveVideoOffset, onDraftVideoOffset, showVideoTrack, totalDuration],
+    [flushVideoDraft, showVideoTrack, totalDuration],
   );
 
   const handleVideoBarPointerMove = useCallback(
@@ -525,9 +612,9 @@ export default function Timeline({
       if (rect.width <= 0) return;
       const deltaMs = ((e.clientX - drag.startClientX) / rect.width) * totalDuration;
       const next = drag.originOffsetMs + deltaMs;
-      onDraftVideoOffset(next);
+      scheduleVideoDraft({ clipKey: drag.clipKey, ms: next });
     },
-    [onDraftVideoOffset, totalDuration],
+    [scheduleVideoDraft, totalDuration],
   );
 
   const handleVideoBarPointerUp = useCallback(
@@ -544,10 +631,10 @@ export default function Timeline({
       const deltaMs =
         rect.width > 0 ? ((e.clientX - drag.startClientX) / rect.width) * totalDuration : 0;
       const next = drag.originOffsetMs + deltaMs;
-      onCommitVideoOffset(next, activeVideoTrack?.id);
-      onDraftVideoOffset(null);
+      onCommitVideoClipOffset(next, drag.clipKey);
+      flushVideoDraft(null);
     },
-    [activeVideoTrack?.id, onCommitVideoOffset, onDraftVideoOffset],
+    [flushVideoDraft, onCommitVideoClipOffset],
   );
 
   const handleVideoBarPointerCancel = useCallback(
@@ -558,26 +645,19 @@ export default function Timeline({
       if (e.currentTarget.hasPointerCapture(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId);
       }
-      onDraftVideoOffset(null);
+      flushVideoDraft(null);
     },
-    [onDraftVideoOffset],
+    [flushVideoDraft],
   );
 
-  const nudgeVideoOffsetMs = useCallback(
-    (deltaMs: number) => {
-      if (!showVideoTrack || effectiveVideoDurationMs <= 0) return;
-      const next = effectiveVideoOffset + deltaMs;
-      onDraftVideoOffset(null);
-      onCommitVideoOffset(next, activeVideoTrack?.id);
+  const nudgeClipVideoOffsetMs = useCallback(
+    (deltaMs: number, clipKey: string, clipOffsetMs: number, clipDurationMs: number) => {
+      if (!showVideoTrack || clipDurationMs <= 0) return;
+      const next = clipOffsetMs + deltaMs;
+      flushVideoDraft(null);
+      onCommitVideoClipOffset(next, clipKey);
     },
-    [
-      activeVideoTrack?.id,
-      effectiveVideoDurationMs,
-      effectiveVideoOffset,
-      onCommitVideoOffset,
-      onDraftVideoOffset,
-      showVideoTrack,
-    ],
+    [flushVideoDraft, onCommitVideoClipOffset, showVideoTrack],
   );
 
   useEffect(() => {
@@ -585,10 +665,16 @@ export default function Timeline({
       if (seekFrameRef.current) {
         cancelAnimationFrame(seekFrameRef.current);
       }
+      if (workspaceChangeFrameRef.current) {
+        cancelAnimationFrame(workspaceChangeFrameRef.current);
+      }
+      if (videoDraftFrameRef.current) {
+        cancelAnimationFrame(videoDraftFrameRef.current);
+      }
     };
   }, []);
 
-  const playheadKnobClass = `absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-4 h-4 shadow-md ${
+  const playheadKnobClass = `absolute top-1/2 -translate-x-1/2 -translate-y-1/2 h-[10.67px] w-[10.67px] shadow-md ${
     isCyber
       ? 'bg-pink-500 rounded-none h-6 w-2'
       : isRound
@@ -649,7 +735,7 @@ export default function Timeline({
 
   return (
     <footer className={`${s.panel} ${className} p-4 z-10 relative flex flex-col gap-3`}>
-      <div className="w-full flex flex-col gap-2.5">
+      <div className="w-full flex flex-col gap-0">
         {renderTrackRow(
           'Workspace',
           formatTimestamp(workspaceLocalMs),
@@ -660,7 +746,7 @@ export default function Timeline({
             onPointerMove={handleWorkspacePointerMove}
             onPointerUp={handleWorkspacePointerUp}
             onPointerCancel={handleWorkspacePointerCancel}
-            className={`h-2.5 relative overflow-visible touch-none select-none ${
+            className={`h-[6.67px] relative overflow-visible touch-none select-none ${
               isScrubbingWorkspace ? 'cursor-grabbing' : 'cursor-pointer'
             } ${s.progressTrack}`}
             title="Workspace timeline — scrub playhead"
@@ -737,7 +823,7 @@ export default function Timeline({
             onPointerMove={handleGlobalPointerMove}
             onPointerUp={handleGlobalPointerUp}
             onPointerCancel={handleGlobalPointerUp}
-            className={`h-2 relative overflow-visible touch-none select-none cursor-pointer ${s.progressTrack}`}
+            className={`h-[5.33px] relative overflow-visible touch-none select-none cursor-pointer ${s.progressTrack}`}
             title="Session timeline — workspace window & context"
           >
             <div
@@ -760,141 +846,254 @@ export default function Timeline({
 
         {normalizedVideoTracks.length > 0
           ? normalizedVideoTracks.map((track, index) => {
-              const isActiveTrack = activeVideoTrack?.id === track.id;
-              const trackOffset =
-                isActiveTrack && draftVideoOffsetMs != null ? effectiveVideoOffset : track.offsetMs;
-              const trackDuration =
-                isActiveTrack ? effectiveVideoDurationMs : track.durationMs;
-              const startRatio = totalDuration > 0 ? clamp(trackOffset / totalDuration, 0, 1) : 0;
-              const endRatio =
-                totalDuration > 0 && trackDuration > 0
-                  ? clamp((trackOffset + trackDuration) / totalDuration, 0, 1)
-                  : startRatio;
-              const leftPct = `${(startRatio * 100).toFixed(2)}%`;
-              const widthPct = `${(Math.max(0, endRatio - startRatio) * 100).toFixed(2)}%`;
-              const centerPct = `${(((startRatio + endRatio) / 2) * 100).toFixed(2)}%`;
-              const videoLocalMs = clamp(displayGlobalTime - trackOffset, 0, trackDuration || 0);
               const videoTrackName =
-                normalizedVideoTracks.length > 1 ? `Video ${index + 1}` : 'Video';
-              const videoTrackLabel = track.label
-                ? `${videoTrackName} (${track.label})`
-                : videoTrackName;
+                track.label ||
+                (normalizedVideoTracks.length > 1 ? `Video Track ${index + 1}` : 'Video Track');
+              const trackStartMs = track.clips.reduce(
+                (min, clip) => Math.min(min, clip.offsetMs),
+                Number.POSITIVE_INFINITY,
+              );
+              const trackEndMs = track.clips.reduce(
+                (max, clip) =>
+                  Math.max(max, clip.offsetMs + Math.max(0, clip.durationMs)),
+                0,
+              );
+              const trackDuration = Number.isFinite(trackStartMs)
+                ? Math.max(0, trackEndMs - trackStartMs)
+                : 0;
+              const coveringForPlayhead =
+                track.clips.find((clip) => {
+                  const dur = clip.durationMs;
+                  return (
+                    dur > 0 &&
+                    displayGlobalTime >= clip.offsetMs &&
+                    displayGlobalTime < clip.offsetMs + dur
+                  );
+                }) ?? null;
+              const referenceClip = coveringForPlayhead ?? track.clips[0] ?? null;
+              const referenceDuration = referenceClip?.durationMs ?? 0;
+              const clipLayouts = track.clips.map((clip) => {
+                const clipDraft =
+                  draftVideoClip?.clipKey === clip.id ? draftVideoClip.ms : null;
+                const committedOffset = clip.offsetMs;
+                const clipOffset = clipDraft ?? committedOffset;
+                const clipDuration = clip.durationMs;
+                const startRatio =
+                  totalDuration > 0 ? clamp(clipOffset / totalDuration, 0, 1) : 0;
+                const endRatio =
+                  totalDuration > 0 && clipDuration > 0
+                    ? clamp((clipOffset + clipDuration) / totalDuration, 0, 1)
+                    : startRatio;
+                const rawWidthRatio = Math.max(0, endRatio - startRatio);
+                const visualWidthRatio = Math.min(
+                  1,
+                  Math.max(rawWidthRatio, MIN_VIDEO_CLIP_VISUAL_RATIO),
+                );
+                const visualStartRatio = Math.min(
+                  startRatio,
+                  Math.max(0, 1 - visualWidthRatio),
+                );
+                const visualEndRatio = Math.min(1, visualStartRatio + visualWidthRatio);
+
+                return {
+                  clip,
+                  clipOffset,
+                  clipDuration,
+                  startRatio,
+                  endRatio,
+                  visualStartRatio,
+                  visualWidthRatio,
+                  visualCenterRatio: (visualStartRatio + visualEndRatio) / 2,
+                };
+              });
+              const sortedForZ = [...clipLayouts].sort((a, b) => {
+                if (a.clipOffset !== b.clipOffset) return a.clipOffset - b.clipOffset;
+                return (a.clip.label ?? '').localeCompare(b.clip.label ?? '');
+              });
+              const zByClipId = new Map(
+                sortedForZ.map((layout, i) => [layout.clip.id, i + 12]),
+              );
+
+              const referenceOffset =
+                referenceClip && draftVideoClip?.clipKey === referenceClip.id
+                  ? draftVideoClip.ms
+                  : (referenceClip?.offsetMs ?? 0);
+              const videoLocalMs = referenceClip
+                ? clamp(
+                    displayGlobalTime - referenceOffset,
+                    0,
+                    referenceDuration || 0,
+                  )
+                : 0;
+              const laneCount = 1;
+              const videoTrackHeight =
+                laneCount * VIDEO_CLIP_LANE_HEIGHT_PX + VIDEO_CLIP_TRACK_PADDING_PX * 2;
               const videoTrackDetail = [
-                `${videoTrackName}: ${track.label || 'Untitled video'}`,
-                `Offset: ${formatSignedSeconds(trackOffset)}`,
-                `Duration: ${trackDuration > 0 ? formatTimestamp(trackDuration) : 'pending'}`,
+                `${videoTrackName}: ${track.clips.length} clip${track.clips.length === 1 ? '' : 's'}`,
+                `Span: ${Number.isFinite(trackStartMs) ? formatTimestamp(trackStartMs) : '--'} - ${
+                  trackEndMs > 0 ? formatTimestamp(trackEndMs) : '--'
+                }`,
+                'Hover a clip bar for nudge controls; drag bar to adjust offset for that clip.',
               ].join('\n');
 
               return renderTrackRow(
-                videoTrackLabel,
-                formatTimestamp(videoLocalMs),
+                videoTrackName,
+                referenceClip ? formatTimestamp(videoLocalMs) : '--',
                 trackDuration > 0 ? formatTimestamp(trackDuration) : '--',
                 <div className="flex flex-1 min-w-0 items-center">
                   <div
-                    ref={isActiveTrack ? videoBarRef : undefined}
-                    className={`group relative flex-1 min-w-0 min-h-[1.25rem] overflow-visible touch-none select-none ${s.progressTrack}`}
-                    title={
-                      isActiveTrack
-                        ? 'Drag video clip to adjust sync offset'
-                        : 'Select this video to adjust sync'
-                    }
+                    ref={videoBarRef}
+                    className="relative flex-1 min-w-0 overflow-visible touch-none select-none"
+                    style={{ height: `${videoTrackHeight}px` }}
+                    title="Video track — hover a clip bar for sync nudges; drag a bar to move that clip."
                   >
-                    <div
-                      className={`absolute top-1/2 -translate-y-1/2 left-0 right-0 h-2 ${s.progressTrack}`}
-                    >
+                    {Array.from({ length: laneCount }).map((_, lane) => (
                       <div
-                        className={`absolute top-0 left-0 h-full ${s.progressFill} opacity-15`}
-                        style={{ width: globalPct }}
-                      />
-                      {isActiveTrack && trackDuration > 0 ? (
+                        key={lane}
+                        className={`absolute left-0 right-0 h-[5.33px] ${s.progressTrack}`}
+                        style={{
+                          top: `${VIDEO_CLIP_TRACK_PADDING_PX + lane * VIDEO_CLIP_LANE_HEIGHT_PX + (VIDEO_CLIP_LANE_HEIGHT_PX - TIMELINE_TRACK_BAR_HEIGHT_PX) / 2}px`,
+                        }}
+                      >
                         <div
-                          className={VIDEO_NUDGE_TOOLBAR_CLASS}
-                          style={{ left: `clamp(4.5rem, ${centerPct}, calc(100% - 4.5rem))` }}
-                          role="group"
-                          aria-label="Nudge video sync"
-                        >
-                          <button
-                            type="button"
-                            className={VIDEO_NUDGE_TOOLBAR_BTN_CLASS}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              nudgeVideoOffsetMs(-5000);
-                            }}
-                            title="Offset -5s (video earlier)"
-                          >
-                            -5
-                          </button>
-                          <button
-                            type="button"
-                            className={VIDEO_NUDGE_TOOLBAR_BTN_CLASS}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              nudgeVideoOffsetMs(-1000);
-                            }}
-                            title="Offset -1s (video earlier)"
-                          >
-                            -1
-                          </button>
-                          <button
-                            type="button"
-                            className={VIDEO_NUDGE_TOOLBAR_BTN_CLASS}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              nudgeVideoOffsetMs(1000);
-                            }}
-                            title="Offset +1s (video later)"
-                          >
-                            +1
-                          </button>
-                          <button
-                            type="button"
-                            className={VIDEO_NUDGE_TOOLBAR_BTN_CLASS}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              nudgeVideoOffsetMs(5000);
-                            }}
-                            title="Offset +5s (video later)"
-                          >
-                            +5
-                          </button>
-                        </div>
-                      ) : null}
-                      {trackDuration > 0 ? (
-                        isActiveTrack ? (
-                          <button
-                            type="button"
-                            onPointerDown={handleVideoBarPointerDown}
-                            onPointerMove={handleVideoBarPointerMove}
-                            onPointerUp={handleVideoBarPointerUp}
-                            onPointerCancel={handleVideoBarPointerCancel}
-                            className="absolute top-1/2 -translate-y-1/2 h-4 min-h-[1.25rem] rounded border border-violet-400/90 bg-violet-500/35 hover:bg-violet-500/50 cursor-grab active:cursor-grabbing"
-                            style={{ left: leftPct, width: widthPct }}
-                            aria-label="Drag to adjust video sync offset"
-                          />
-                        ) : (
-                          <div
-                            className="absolute top-1/2 -translate-y-1/2 h-3 rounded border border-violet-300/35 bg-violet-500/18"
-                            style={{ left: leftPct, width: widthPct }}
-                          />
-                        )
-                      ) : (
-                        <span className={`absolute inset-x-0 top-1/2 -translate-y-1/2 text-center text-[10px] ${s.textSecondary}`}>
-                          Duration pending...
-                        </span>
-                      )}
+                          className={`absolute top-0 left-0 h-full ${s.progressFill} opacity-15`}
+                          style={{ width: globalPct }}
+                        />
+                      </div>
+                    ))}
+                    {clipLayouts.map((layout) => {
+                        const {
+                          clip,
+                          clipOffset,
+                          clipDuration,
+                          startRatio,
+                          visualStartRatio,
+                          visualWidthRatio,
+                        } = layout;
+                        const lane = 0;
+                        const leftPct = `${(visualStartRatio * 100).toFixed(2)}%`;
+                        const widthPct = `${(visualWidthRatio * 100).toFixed(2)}%`;
+                        const laneCenterPx =
+                          VIDEO_CLIP_TRACK_PADDING_PX +
+                          lane * VIDEO_CLIP_LANE_HEIGHT_PX +
+                          VIDEO_CLIP_LANE_HEIGHT_PX / 2;
+                        const clipDetail = [
+                          clip.label || 'Untitled video',
+                          `Offset: ${formatSignedSeconds(clipOffset)}`,
+                          `Duration: ${clipDuration > 0 ? formatTimestamp(clipDuration) : 'pending'}`,
+                        ].join('\n');
+                        const clipZIndex = zByClipId.get(clip.id) ?? 12;
+
+                        return (
+                          <Fragment key={clip.id}>
+                            {clipDuration > 0 ? (
+                              <div
+                                className="group/clip pointer-events-auto absolute -translate-y-1/2 rounded border border-violet-400/50 bg-violet-500/30 shadow-sm shadow-violet-950/20 h-[10.67px] hover:border-violet-300/65 hover:bg-violet-500/45"
+                                style={{
+                                  left: leftPct,
+                                  top: `${laneCenterPx}px`,
+                                  width: widthPct,
+                                  zIndex: clipZIndex + 20,
+                                }}
+                              >
+                                <div
+                                  className={VIDEO_NUDGE_TOOLBAR_CLASS}
+                                  role="group"
+                                  aria-label="Nudge clip sync"
+                                >
+                                  <button
+                                    type="button"
+                                    className={VIDEO_NUDGE_TOOLBAR_BTN_CLASS}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      nudgeClipVideoOffsetMs(-5000, clip.id, clipOffset, clipDuration);
+                                    }}
+                                    title="Offset -5s (video earlier)"
+                                  >
+                                    -5
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={VIDEO_NUDGE_TOOLBAR_BTN_CLASS}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      nudgeClipVideoOffsetMs(-1000, clip.id, clipOffset, clipDuration);
+                                    }}
+                                    title="Offset -1s (video earlier)"
+                                  >
+                                    -1
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={VIDEO_NUDGE_TOOLBAR_BTN_CLASS}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      nudgeClipVideoOffsetMs(1000, clip.id, clipOffset, clipDuration);
+                                    }}
+                                    title="Offset +1s (video later)"
+                                  >
+                                    +1
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={VIDEO_NUDGE_TOOLBAR_BTN_CLASS}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      nudgeClipVideoOffsetMs(5000, clip.id, clipOffset, clipDuration);
+                                    }}
+                                    title="Offset +5s (video later)"
+                                  >
+                                    +5
+                                  </button>
+                                </div>
+                                <button
+                                  type="button"
+                                  onPointerDown={(e) =>
+                                    handleVideoBarPointerDown(
+                                      e,
+                                      clip.id,
+                                      clipOffset,
+                                      clipDuration,
+                                    )
+                                  }
+                                  onPointerMove={handleVideoBarPointerMove}
+                                  onPointerUp={handleVideoBarPointerUp}
+                                  onPointerCancel={handleVideoBarPointerCancel}
+                                  className="absolute inset-0 cursor-grab active:cursor-grabbing rounded-[inherit] bg-transparent"
+                                  title={clipDetail}
+                                  aria-label={`Drag to adjust sync offset · ${clip.label || 'video clip'}`}
+                                />
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-violet-400/50 bg-violet-500/32 hover:border-violet-300/70 hover:bg-violet-500/48"
+                                style={{
+                                  left: `${(startRatio * 100).toFixed(2)}%`,
+                                  top: `${laneCenterPx}px`,
+                                  zIndex: clipZIndex + 20,
+                                }}
+                                title={clipDetail}
+                                aria-label={clip.label || 'Video clip pending duration'}
+                              />
+                            )}
+                          </Fragment>
+                        );
+                      })}
                       <div
-                        className={`${playheadKnobClass} pointer-events-none`}
+                        className="absolute top-0 bottom-0 w-[1px] bg-white/20 pointer-events-none z-10"
+                        style={{ left: globalPct, transform: 'translateX(-50%)' }}
+                      />
+                      <div
+                        className={`${playheadKnobClass} pointer-events-none z-20`}
                         style={{ left: globalPct }}
                       />
-                    </div>
                   </div>
                 </div>,
                 {
                   key: track.id,
-                  subtitle: track.label,
+                  subtitle: videoTrackName,
                   detail: videoTrackDetail,
-                  active: isActiveTrack,
-                  onSelect: () => onSelectVideoTrack?.(track.id),
                 },
               );
             })
@@ -903,183 +1102,11 @@ export default function Timeline({
               '--',
               '--',
               <div
-                className={`h-2 relative flex items-center px-2 ${s.progressTrack} ${s.textSecondary} text-[10px]`}
+                className={`h-[5.33px] relative flex items-center px-2 ${s.progressTrack} ${s.textSecondary} text-[10px]`}
               >
                 No video bound
               </div>,
             )}
-
-        {false && (showVideoTrack
-          ? renderTrackRow(
-              'Video',
-              formatTimestamp(
-                clamp(displayGlobalTime - effectiveVideoOffset, 0, videoDurationMs || 0),
-              ),
-              formatTimestamp(videoDurationMs),
-              <div className="flex flex-1 min-w-0 items-center gap-1.5">
-                <div
-                  className="hidden"
-                  role="group"
-                  aria-label="Nudge video sync earlier"
-                >
-                  <button
-                    type="button"
-                    className={VIDEO_NUDGE_BTN_CLASS}
-                    disabled={videoDurationMs <= 0}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      nudgeVideoOffsetMs(-1000);
-                    }}
-                    title="Offset −1s (video earlier)"
-                  >
-                    −1s
-                  </button>
-                  <button
-                    type="button"
-                    className={VIDEO_NUDGE_BTN_CLASS}
-                    disabled={videoDurationMs <= 0}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      nudgeVideoOffsetMs(-5000);
-                    }}
-                    title="Offset −5s (video earlier)"
-                  >
-                    −5s
-                  </button>
-                </div>
-                <div
-                  ref={videoBarRef}
-                  className={`group relative flex-1 min-w-0 min-h-[1.25rem] overflow-visible touch-none select-none ${s.progressTrack}`}
-                  title="Drag video clip to adjust sync offset"
-                >
-                  <div
-                    className={`absolute top-1/2 -translate-y-1/2 left-0 right-0 h-2 ${s.progressTrack}`}
-                  >
-                    <div
-                      className={`absolute top-0 left-0 h-full ${s.progressFill} opacity-15`}
-                      style={{ width: globalPct }}
-                    />
-                    {videoDurationMs > 0 ? (
-                      <div
-                        className={VIDEO_NUDGE_TOOLBAR_CLASS}
-                        style={{ left: `clamp(4.5rem, ${videoCenterPct}, calc(100% - 4.5rem))` }}
-                        role="group"
-                        aria-label="Nudge video sync"
-                      >
-                        <button
-                          type="button"
-                          className={VIDEO_NUDGE_TOOLBAR_BTN_CLASS}
-                          disabled={videoDurationMs <= 0}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            nudgeVideoOffsetMs(-5000);
-                          }}
-                          title="Offset -5s (video earlier)"
-                        >
-                          -5
-                        </button>
-                        <button
-                          type="button"
-                          className={VIDEO_NUDGE_TOOLBAR_BTN_CLASS}
-                          disabled={videoDurationMs <= 0}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            nudgeVideoOffsetMs(-1000);
-                          }}
-                          title="Offset -1s (video earlier)"
-                        >
-                          -1
-                        </button>
-                        <button
-                          type="button"
-                          className={VIDEO_NUDGE_TOOLBAR_BTN_CLASS}
-                          disabled={videoDurationMs <= 0}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            nudgeVideoOffsetMs(1000);
-                          }}
-                          title="Offset +1s (video later)"
-                        >
-                          +1
-                        </button>
-                        <button
-                          type="button"
-                          className={VIDEO_NUDGE_TOOLBAR_BTN_CLASS}
-                          disabled={videoDurationMs <= 0}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            nudgeVideoOffsetMs(5000);
-                          }}
-                          title="Offset +5s (video later)"
-                        >
-                          +5
-                        </button>
-                      </div>
-                    ) : null}
-                    {videoDurationMs > 0 ? (
-                      <button
-                        type="button"
-                        onPointerDown={handleVideoBarPointerDown}
-                        onPointerMove={handleVideoBarPointerMove}
-                        onPointerUp={handleVideoBarPointerUp}
-                        onPointerCancel={handleVideoBarPointerCancel}
-                        className="absolute top-1/2 -translate-y-1/2 h-4 min-h-[1.25rem] rounded border border-violet-400/90 bg-violet-500/35 hover:bg-violet-500/50 cursor-grab active:cursor-grabbing"
-                        style={{ left: videoLeftPct, width: videoWidthPct }}
-                        aria-label="Drag to adjust video sync offset"
-                      />
-                    ) : (
-                      <span className={`absolute inset-x-0 top-1/2 -translate-y-1/2 text-center text-[10px] ${s.textSecondary}`}>
-                        Duration pending…
-                      </span>
-                    )}
-                    <div
-                      className={`${playheadKnobClass} pointer-events-none`}
-                      style={{ left: globalPct }}
-                    />
-                  </div>
-                </div>
-                <div
-                  className="hidden"
-                  role="group"
-                  aria-label="Nudge video sync later"
-                >
-                  <button
-                    type="button"
-                    className={VIDEO_NUDGE_BTN_CLASS}
-                    disabled={videoDurationMs <= 0}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      nudgeVideoOffsetMs(1000);
-                    }}
-                    title="Offset +1s (video later)"
-                  >
-                    +1s
-                  </button>
-                  <button
-                    type="button"
-                    className={VIDEO_NUDGE_BTN_CLASS}
-                    disabled={videoDurationMs <= 0}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      nudgeVideoOffsetMs(5000);
-                    }}
-                    title="Offset +5s (video later)"
-                  >
-                    +5s
-                  </button>
-                </div>
-              </div>,
-            )
-          : renderTrackRow(
-              'Video',
-              '—',
-              '—',
-              <div
-                className={`h-2 relative flex items-center px-2 ${s.progressTrack} ${s.textSecondary} text-[10px]`}
-              >
-                No video bound
-              </div>,
-            ))}
       </div>
 
       {/* Controls */}
@@ -1096,7 +1123,7 @@ export default function Timeline({
               step={SPEED_STEP}
               value={playbackSpeed}
               onChange={(e) => onSpeedChange(parseFloat(e.target.value))}
-              className="flex-1 h-2 accent-cyan-500"
+              className="flex-1 h-[5.33px] accent-cyan-500"
             />
           </div>
           <div
