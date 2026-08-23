@@ -1,8 +1,19 @@
 import type { Session } from '@/types/models';
 
+export function getVideoFileWallClockStartMs(
+  file: Pick<File, 'lastModified'>,
+  durationMs = 0,
+): number | null {
+  const ms = file.lastModified;
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const recordingStartMs =
+    Number.isFinite(durationMs) && durationMs > 0 ? ms - durationMs : ms;
+  return Math.round(recordingStartMs / 1000) * 1000;
+}
+
 /**
  * When the session was imported with a reliable track time origin, and the video's
- * wall-clock start (typically `File.lastModified`) falls within the session's
+ * wall-clock start (typically `File.lastModified - videoDuration`) falls within the session's
  * wall-clock span, returns `offsetMs` such that sessionTime − offsetMs = videoTime
  * (same convention as Replay: rawVideoTimeMs = currentTime − offsetMs).
  */

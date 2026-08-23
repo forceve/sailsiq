@@ -16,6 +16,9 @@ import {
   Trash2,
   Loader2,
   Layers3,
+  Columns2,
+  Rows2,
+  Plus,
   X,
 } from 'lucide-react';
 import { useTheme } from '@/theme/ThemeContext';
@@ -51,7 +54,10 @@ import {
   saveSplitDirection,
   saveWorkspaceMode,
 } from '@/utils/videoSession';
-import { tryComputeVideoOffsetFromWallClock } from '@/utils/videoAutoOffset';
+import {
+  getVideoFileWallClockStartMs,
+  tryComputeVideoOffsetFromWallClock,
+} from '@/utils/videoAutoOffset';
 import {
   createOffsetOnlyVideoSync,
   createVideoSyncBindingFromAnchor,
@@ -82,6 +88,8 @@ import type {
   SessionVideo,
   LocalSessionVideo,
   TelemetryDataset,
+  VideoPlacementConfidence,
+  VideoPlacementSource,
   VideoSyncBinding,
   VideoType,
   WindInputSource,
@@ -99,11 +107,13 @@ import type {
   WorkspaceVideoFileSummary,
 } from '@/types/workspace';
 import {
-  getLocalWorkspaceSessionBundle,
   getLocalWorkspaceSessionBindings,
+  getLocalWorkspaceSessionShell,
   getWorkspaceRelativeBindingPath,
   importLocalWorkspaceTelemetryFile,
   listLocalWorkspaceVideoFiles,
+  loadLocalWorkspaceTelemetryDatasetsInChunks,
+  loadLocalWorkspaceTrackPointsInChunks,
   loadLocalWorkspaceVideoFile,
   parseLocalTelemetryFile,
   saveLocalWorkspaceSession,
@@ -131,13 +141,50 @@ interface ActiveVideoSource {
   key: string;
   origin: 'remote' | 'local';
   id?: string;
+  videoTrackId: string;
+  videoTrackName: string;
   url: string;
   label?: string;
   videoType: VideoType;
   offsetMs: number;
   sync?: VideoSyncBinding;
+  placementSource?: VideoPlacementSource;
+  placementConfidence?: VideoPlacementConfidence;
   signature?: string;
   crossOrigin?: '' | 'anonymous';
+}
+
+interface VideoTimelineClip {
+  source: ActiveVideoSource;
+  durationMs: number;
+}
+
+interface VideoTimelineTrack {
+  id: string;
+  label: string;
+  clips: VideoTimelineClip[];
+}
+
+interface VideoTrackDraft {
+  id: string;
+  name: string;
+  videoType: VideoType;
+}
+
+interface ManagedVideoTrack extends VideoTimelineTrack {
+  videoType: VideoType;
+  draftOnly: boolean;
+}
+
+interface VideoTrackTarget {
+  id: string;
+  name: string;
+}
+
+interface VideoPlacement {
+  offsetMs: number;
+  placementSource: VideoPlacementSource;
+  placementConfidence: VideoPlacementConfidence;
 }
 
 const DESKTOP_MEDIA_QUERY = '(min-width: 1024px)';
@@ -152,6 +199,9 @@ const EVENT_ACTIVE_WINDOW_MS = 30000;
 const COMPANION_HEARTBEAT_MS = 1200;
 const COMPANION_TIMEOUT_MS = 4000;
 const VIDEO_CLOCK_STATE_UPDATE_MS = 100;
+const PLAYBACK_STATE_UPDATE_MS = 50;
+const DEFAULT_VIDEO_TRACK_ID = 'video-track-main';
+const NEW_VIDEO_TRACK_OPTION = '__new_video_track__';
 const EDGE_TOGGLE_TOOLTIP_CLASS =
   'pointer-events-none absolute top-1/2 z-20 hidden -translate-y-1/2 whitespace-nowrap rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[11px] font-medium text-white shadow-lg group-hover:block';
 const DEFAULT_STAGE_PRIMARY: WorkspaceStageContent = 'map';
@@ -280,6 +330,49 @@ function localVideoKey(signature: string): string {
 
 function remoteVideoKey(video: SessionVideo): string {
   return `remote:${video.id ?? video.url}`;
+}
+
+function createVideoTrackId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `video-track-${crypto.randomUUID()}`;
+  }
+  return `video-track-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function sanitizeVideoTrackName(value: string | undefined, fallback: string): string {
+  const trimmed = value?.trim();
+  return trimmed || fallback;
+}
+
+function getLegacyVideoTrackId(videoKey: string): string {
+  return `legacy-${videoKey.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+}
+
+function resolveVideoTrackTarget(
+  input: {
+    selectedTrackId: string;
+    newTrackName: string;
+    existingTracks: VideoTimelineTrack[];
+    sessionId?: string;
+  },
+): VideoTrackTarget {
+  if (input.selectedTrackId === NEW_VIDEO_TRACK_OPTION) {
+    return {
+      id: createVideoTrackId(),
+      name: sanitizeVideoTrackName(
+        input.newTrackName,
+        `Video Track ${input.existingTracks.length + 1}`,
+      ),
+    };
+  }
+
+  const existing = input.existingTracks.find((track) => track.id === input.selectedTrackId);
+  if (existing) return { id: existing.id, name: existing.label };
+
+  return {
+    id: DEFAULT_VIDEO_TRACK_ID,
+    name: 'Video Track 1',
+  };
 }
 
 function isVideoStageContent(content: WorkspaceStageContent): boolean {
@@ -465,6 +558,16 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Request failed.';
 }
 
+function stripTelemetryDatasetSamples(dataset: TelemetryDataset): TelemetryDataset {
+  return {
+    ...dataset,
+    channels: dataset.channels.map((channel) => ({
+      ...channel,
+      samples: [],
+    })),
+  };
+}
+
 function findNearestEvent(
   events: SessionEvent[],
   currentTime: number,
@@ -492,6 +595,38 @@ function getMediaBaseName(fileName: string): string {
 
 function getVideoDurationMs(video: HTMLVideoElement): number {
   return Number.isFinite(video.duration) && video.duration > 0 ? video.duration * 1000 : 0;
+}
+
+function readVideoFileDurationMs(file: File): Promise<number> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    let settled = false;
+
+    const finish = (durationMs: number) => {
+      if (settled) return;
+      settled = true;
+      video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      video.removeEventListener('durationchange', handleLoadedMetadata);
+      video.removeEventListener('error', handleError);
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      URL.revokeObjectURL(url);
+      resolve(durationMs);
+    };
+
+    const handleLoadedMetadata = () => finish(getVideoDurationMs(video));
+    const handleError = () => finish(0);
+
+    video.preload = 'metadata';
+    video.playsInline = true;
+    video.addEventListener('loadedmetadata', handleLoadedMetadata);
+    video.addEventListener('durationchange', handleLoadedMetadata);
+    video.addEventListener('error', handleError);
+    video.src = url;
+    video.load();
+  });
 }
 
 export default function ReplayWorkspacePage() {
@@ -522,9 +657,8 @@ function ReplayWorkspaceHostPage() {
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [marks, setMarks] = useState<Mark[]>([]);
   const [sessionVideos, setSessionVideos] = useState<SessionVideo[]>([]);
-  const [activeVideoKey, setActiveVideoKey] = useState<string | null>(null);
-  const [activeRemoteVideoId, setActiveRemoteVideoId] = useState<string | null>(null);
-  const [localVideo, setLocalVideo] = useState<LocalSessionVideo | null>(null);
+  const [manageClipDetailKey, setManageClipDetailKey] = useState<string | null>(null);
+  const [localVideos, setLocalVideos] = useState<LocalSessionVideo[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('events');
@@ -535,7 +669,10 @@ function ReplayWorkspaceHostPage() {
     startMs: 0,
     endMs: 0,
   });
-  const [draftOffsetMs, setDraftOffsetMs] = useState<number | null>(null);
+  const [timelineDraftClip, setTimelineDraftClip] = useState<{
+    clipKey: string;
+    ms: number;
+  } | null>(null);
   const [mapLayer, setMapLayer] = useState<MapBaselayerKind>('vector');
   const [statsCollapsed, setStatsCollapsed] = useState(false);
   const [manualWind, setManualWind] = useState<{ dir: number; speed: number } | null>(null);
@@ -551,9 +688,15 @@ function ReplayWorkspaceHostPage() {
   const [splitDirection, setSplitDirection] = useState<SplitDirection>('left-right');
   const [videoDraftUrl, setVideoDraftUrl] = useState('');
   const [videoDraftType, setVideoDraftType] = useState<VideoType>('flat');
+  const [videoTargetTrackId, setVideoTargetTrackId] = useState(DEFAULT_VIDEO_TRACK_ID);
+  const [videoNewTrackName, setVideoNewTrackName] = useState('');
+  const [videoTrackDrafts, setVideoTrackDrafts] = useState<Record<string, VideoTrackDraft>>({});
+  const [expandedVideoTrackId, setExpandedVideoTrackId] = useState<string | null>(null);
+  const [videoFilePickerTrackId, setVideoFilePickerTrackId] = useState<string | null>(null);
   const [videoBusy, setVideoBusy] = useState(false);
   const [videoControlError, setVideoControlError] = useState<string | null>(null);
   const [sensorImportMessage, setSensorImportMessage] = useState<string | null>(null);
+  const [telemetryDataVersion, setTelemetryDataVersion] = useState(0);
   const [videoStageError, setVideoStageError] = useState<string | null>(null);
   const [videoStageReady, setVideoStageReady] = useState(false);
   const [videoDurationsByKey, setVideoDurationsByKey] = useState<Record<string, number>>({});
@@ -561,6 +704,7 @@ function ReplayWorkspaceHostPage() {
   const [videoDurationMs, setVideoDurationMs] = useState(0);
   const [videoClockMs, setVideoClockMs] = useState(0);
   const [syncDialogOpen, setSyncDialogOpen] = useState(false);
+  const [syncDialogClipKey, setSyncDialogClipKey] = useState<string | null>(null);
   const [syncSessionTimeMs, setSyncSessionTimeMs] = useState(0);
   const [syncVideoTimeMs, setSyncVideoTimeMs] = useState(0);
   const [isVideoDialogOpen, setIsVideoDialogOpen] = useState(false);
@@ -598,6 +742,8 @@ function ReplayWorkspaceHostPage() {
 
   const animRef = useRef<number>(0);
   const lastFrameRef = useRef<number>(0);
+  const currentTimeRef = useRef(0);
+  const lastPlaybackStateUpdateRef = useRef(0);
   const resumeAfterScrubRef = useRef(false);
   const resumeAfterSyncRef = useRef(false);
   const workspaceRef = useRef<HTMLElement | null>(null);
@@ -605,11 +751,12 @@ function ReplayWorkspaceHostPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const sensorInputRef = useRef<HTMLInputElement | null>(null);
   const topBarRef = useRef<HTMLDivElement | null>(null);
-  const localVideoRef = useRef<LocalSessionVideo | null>(null);
-  const localVideoObjectUrlRef = useRef<string | null>(null);
+  const localVideosRef = useRef<LocalSessionVideo[]>([]);
+  const splitDirectionInitializedRef = useRef(false);
   const companionChannelRef = useRef<BroadcastChannel | null>(null);
   const companionHostStateRef = useRef<CompanionHostState | null>(null);
   const lastCompanionReadyAtRef = useRef(0);
+  const telemetryWindowLoadSeqRef = useRef(0);
   const resizeStateRef = useRef<{
     handle: DragHandle;
     pointerId: number;
@@ -626,6 +773,26 @@ function ReplayWorkspaceHostPage() {
     () => tracks.find((track) => track.id === activeTrackId) ?? tracks[0] ?? null,
     [activeTrackId, tracks],
   );
+  const effectiveTrackTimeOriginUnixMs = useMemo(() => {
+    const origin =
+      session?.trackTimeOriginUnixMs ??
+      activeTrack?.trackTimeOriginUnixMs ??
+      tracks.find((track) => track.id === primaryTrackId)?.trackTimeOriginUnixMs ??
+      tracks.find((track) => track.trackTimeOriginUnixMs != null)?.trackTimeOriginUnixMs;
+    return origin != null && Number.isFinite(origin) ? origin : undefined;
+  }, [activeTrack?.trackTimeOriginUnixMs, primaryTrackId, session?.trackTimeOriginUnixMs, tracks]);
+  const sessionWithEffectiveTrackOrigin = useMemo(
+    () =>
+      session
+        ? {
+            ...session,
+            ...(effectiveTrackTimeOriginUnixMs != null
+              ? { trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs }
+              : {}),
+          }
+        : null,
+    [effectiveTrackTimeOriginUnixMs, session],
+  );
   const telemetry = useMemo(
     () => getActiveTrackPoints(tracks, trackPointsById, activeTrackId),
     [activeTrackId, trackPointsById, tracks],
@@ -637,73 +804,344 @@ function ReplayWorkspaceHostPage() {
 
   const videoSources = useMemo<ActiveVideoSource[]>(() => {
     const sources: ActiveVideoSource[] = [];
-    if (localVideo) {
+    localVideos.forEach((video, index) => {
+      const key = localVideoKey(video.signature);
+      const fallbackTrackId =
+        localVideos.length === 1 && sessionVideos.length === 0
+          ? DEFAULT_VIDEO_TRACK_ID
+          : getLegacyVideoTrackId(key);
       sources.push({
-        key: localVideoKey(localVideo.signature),
+        key,
         origin: 'local',
-        url: localVideo.objectUrl,
-        label: localVideo.label ?? localVideo.file.name,
-        videoType: localVideo.videoType,
-        offsetMs: localVideo.offsetMs,
-        sync: localVideo.sync,
-        signature: localVideo.signature,
+        videoTrackId: video.videoTrackId ?? fallbackTrackId,
+        videoTrackName:
+          video.videoTrackName ??
+          (video.videoTrackId ? 'Video Track' : `Video Track ${index + 1}`),
+        url: video.objectUrl,
+        label: video.label ?? video.file.name,
+        videoType: video.videoType,
+        offsetMs: video.offsetMs,
+        sync: video.sync,
+        placementSource: video.placementSource,
+        placementConfidence: video.placementConfidence,
+        signature: video.signature,
         crossOrigin: '',
       });
-    }
+    });
 
-    sessionVideos.forEach((video) => {
+    sessionVideos.forEach((video, index) => {
+      const key = remoteVideoKey(video);
+      const fallbackTrackId =
+        sessionVideos.length === 1 && localVideos.length === 0
+          ? DEFAULT_VIDEO_TRACK_ID
+          : getLegacyVideoTrackId(key);
       sources.push({
-        key: remoteVideoKey(video),
+        key,
         origin: 'remote',
         id: video.id,
+        videoTrackId: video.videoTrackId ?? fallbackTrackId,
+        videoTrackName:
+          video.videoTrackName ??
+          (video.videoTrackId ? 'Video Track' : `Video Track ${localVideos.length + index + 1}`),
         url: video.url,
         label: video.label,
         videoType: video.videoType,
         offsetMs: video.offsetMs,
         sync: video.sync,
+        placementSource: video.placementSource,
+        placementConfidence: video.placementConfidence,
         crossOrigin: 'anonymous',
       });
     });
 
     return sources;
-  }, [localVideo, sessionVideos]);
+  }, [localVideos, sessionVideos]);
 
-  const activeVideo = useMemo<ActiveVideoSource | null>(() => {
-    if (videoSources.length === 0) return null;
-    return (
-      videoSources.find((video) => video.key === activeVideoKey) ??
-      videoSources.find(
-        (video) =>
-          video.origin === 'remote' &&
-          sessionVideos.some(
-            (sessionVideo) =>
-              remoteVideoKey(sessionVideo) === video.key &&
-              sessionVideo.id === activeRemoteVideoId,
-          ),
-      ) ??
-      videoSources[0] ??
-      null
-    );
-  }, [activeRemoteVideoId, activeVideoKey, sessionVideos, videoSources]);
+  const getLocalVideoRow = useCallback(
+    (source: ActiveVideoSource | null): LocalSessionVideo | null => {
+      if (!source || source.origin !== 'local') return null;
+      return localVideos.find((video) => localVideoKey(video.signature) === source.key) ?? null;
+    },
+    [localVideos],
+  );
 
-  const selectActiveVideo = useCallback((video: ActiveVideoSource | null) => {
-    setActiveVideoKey(video?.key ?? null);
-    if (video?.origin === 'remote') {
-      setActiveRemoteVideoId(video.id ?? null);
-      setVideoDraftUrl(video.url);
-      setVideoDraftType(video.videoType);
-    } else if (video?.origin === 'local') {
-      setActiveRemoteVideoId(null);
-      setVideoDraftType(video.videoType);
-    } else {
-      setActiveRemoteVideoId(null);
+  const videoTimelineTracks = useMemo<VideoTimelineTrack[]>(() => {
+    const byTrack = new Map<string, VideoTimelineTrack>();
+
+    videoSources.forEach((source) => {
+      const existing = byTrack.get(source.videoTrackId);
+      const clip: VideoTimelineClip = {
+        source,
+        durationMs: videoDurationsByKey[source.key] ?? 0,
+      };
+      if (existing) {
+        existing.clips.push(clip);
+        return;
+      }
+      byTrack.set(source.videoTrackId, {
+        id: source.videoTrackId,
+        label: source.videoTrackName,
+        clips: [clip],
+      });
+    });
+
+    return Array.from(byTrack.values()).map((track) => ({
+      ...track,
+      clips: [...track.clips].sort((a, b) => {
+        if (a.source.offsetMs !== b.source.offsetMs) {
+          return a.source.offsetMs - b.source.offsetMs;
+        }
+        return (a.source.label ?? '').localeCompare(b.source.label ?? '');
+      }),
+    }));
+  }, [videoDurationsByKey, videoSources]);
+
+  const managedVideoTracks = useMemo<ManagedVideoTrack[]>(() => {
+    const byTrack = new Map<string, ManagedVideoTrack>();
+
+    videoTimelineTracks.forEach((track) => {
+      const draft = videoTrackDrafts[track.id];
+      byTrack.set(track.id, {
+        ...track,
+        label: draft?.name ?? track.label,
+        videoType: draft?.videoType ?? track.clips[0]?.source.videoType ?? videoDraftType,
+        draftOnly: false,
+      });
+    });
+
+    Object.values(videoTrackDrafts).forEach((draft) => {
+      if (byTrack.has(draft.id)) return;
+      byTrack.set(draft.id, {
+        id: draft.id,
+        label: draft.name,
+        videoType: draft.videoType,
+        clips: [],
+        draftOnly: true,
+      });
+    });
+
+    return Array.from(byTrack.values());
+  }, [videoDraftType, videoTimelineTracks, videoTrackDrafts]);
+
+  const resolveVideoForTimelineTrack = useCallback(
+    (trackId: string): ActiveVideoSource | null => {
+      const track = videoTimelineTracks.find((item) => item.id === trackId);
+      if (!track) return videoSources.find((source) => source.key === trackId) ?? null;
+
+      const coveringClip = track.clips.find((clip) => {
+        const durationMs = clip.durationMs || videoDurationsByKey[clip.source.key] || 0;
+        return (
+          durationMs > 0 &&
+          currentTime >= clip.source.offsetMs &&
+          currentTime < clip.source.offsetMs + durationMs
+        );
+      });
+      if (coveringClip) return coveringClip.source;
+
+      return track.clips[0]?.source ?? null;
+    },
+    [currentTime, videoDurationsByKey, videoSources, videoTimelineTracks],
+  );
+
+  const primaryStageVideo = useMemo(() => {
+    const fromContent = (content: WorkspaceStageContent) => {
+      const vk = videoKeyFromStageContent(content);
+      if (!vk) return null;
+      return resolveVideoForTimelineTrack(vk);
+    };
+
+    if (stageLayoutMode === 'split') {
+      return (
+        fromContent(leftStageContent) ??
+        fromContent(rightStageContent) ??
+        videoSources[0] ??
+        null
+      );
     }
-    setDraftOffsetMs(null);
-    setVideoStageError(null);
-    setVideoStageReady(false);
-    setSyncSessionTimeMs(0);
-    setSyncVideoTimeMs(0);
-  }, []);
+    return fromContent(primaryStageContent) ?? videoSources[0] ?? null;
+  }, [
+    leftStageContent,
+    primaryStageContent,
+    resolveVideoForTimelineTrack,
+    rightStageContent,
+    stageLayoutMode,
+    videoSources,
+  ]);
+
+  const manageClipDetailVideo = useMemo(
+    () =>
+      manageClipDetailKey
+        ? videoSources.find((video) => video.key === manageClipDetailKey) ?? null
+        : null,
+    [manageClipDetailKey, videoSources],
+  );
+
+  const syncDialogVideo = useMemo(
+    () =>
+      syncDialogClipKey
+        ? videoSources.find((video) => video.key === syncDialogClipKey) ?? null
+        : null,
+    [syncDialogClipKey, videoSources],
+  );
+
+  const activeVideo = primaryStageVideo;
+  const localVideo = getLocalVideoRow(primaryStageVideo);
+
+  useEffect(() => {
+    const expandedTrack = expandedVideoTrackId
+      ? managedVideoTracks.find((track) => track.id === expandedVideoTrackId)
+      : null;
+    if (expandedTrack) {
+      setVideoTargetTrackId(expandedTrack.id);
+      setVideoDraftType(expandedTrack.videoType);
+      return;
+    }
+
+    const fallbackTrack =
+      (primaryStageVideo
+        ? managedVideoTracks.find((track) => track.id === primaryStageVideo.videoTrackId)
+        : null) ??
+      managedVideoTracks[0] ??
+      null;
+    if (fallbackTrack) {
+      setVideoTargetTrackId(fallbackTrack.id);
+      setVideoDraftType(fallbackTrack.videoType);
+      return;
+    }
+
+    setVideoTargetTrackId(DEFAULT_VIDEO_TRACK_ID);
+  }, [expandedVideoTrackId, managedVideoTracks, primaryStageVideo]);
+
+  const handleAddManagedVideoTrack = useCallback(() => {
+    const trackId = createVideoTrackId();
+    const nextTrack: VideoTrackDraft = {
+      id: trackId,
+      name: `Video Track ${managedVideoTracks.length + 1}`,
+      videoType: 'flat',
+    };
+    setVideoTrackDrafts((prev) => ({
+      ...prev,
+      [trackId]: nextTrack,
+    }));
+    setExpandedVideoTrackId(trackId);
+    setVideoTargetTrackId(trackId);
+    setVideoDraftType(nextTrack.videoType);
+    setVideoNewTrackName('');
+    setVideoDialogTab('recommended');
+  }, [managedVideoTracks.length]);
+
+  const updateManagedVideoTrackDraft = useCallback(
+    (track: ManagedVideoTrack, patch: Partial<Pick<VideoTrackDraft, 'name' | 'videoType'>>) => {
+      setVideoTrackDrafts((prev) => {
+        const existing = prev[track.id];
+        return {
+          ...prev,
+          [track.id]: {
+            id: track.id,
+            name: patch.name ?? existing?.name ?? track.label,
+            videoType: patch.videoType ?? existing?.videoType ?? track.videoType,
+          },
+        };
+      });
+      if (patch.videoType) setVideoDraftType(patch.videoType);
+    },
+    [],
+  );
+
+  const commitManagedVideoTrackConfig = useCallback(
+    async (
+      track: ManagedVideoTrack,
+      patch: Partial<Pick<VideoTrackDraft, 'name' | 'videoType'>>,
+    ) => {
+      const draft = videoTrackDrafts[track.id];
+      const nextName = sanitizeVideoTrackName(
+        patch.name ?? draft?.name ?? track.label,
+        track.label || 'Video Track',
+      );
+      const nextVideoType = patch.videoType ?? draft?.videoType ?? track.videoType;
+      const clipKeys = new Set(track.clips.map((clip) => clip.source.key));
+
+      setVideoTrackDrafts((prev) => ({
+        ...prev,
+        [track.id]: {
+          id: track.id,
+          name: nextName,
+          videoType: nextVideoType,
+        },
+      }));
+      setVideoDraftType(nextVideoType);
+      setLocalVideos((prev) =>
+        prev.map((video) =>
+          clipKeys.has(localVideoKey(video.signature))
+            ? { ...video, videoTrackName: nextName, videoType: nextVideoType }
+            : video,
+        ),
+      );
+      setSessionVideos((prev) =>
+        prev.map((video) =>
+          clipKeys.has(remoteVideoKey(video))
+            ? {
+                ...video,
+                videoTrackName: nextName,
+                videoType: nextVideoType,
+                updatedAt: new Date().toISOString(),
+              }
+            : video,
+        ),
+      );
+
+      if (!sessionId || clipKeys.size === 0) return;
+
+      const affectedRemoteVideos = sessionVideos.filter((video) =>
+        clipKeys.has(remoteVideoKey(video)),
+      );
+      const nextBindings = sessionBindings?.videos.map((binding) =>
+        binding.videoTrackId === track.id
+          ? { ...binding, videoTrackName: nextName, videoType: nextVideoType }
+          : binding,
+      );
+
+      if (affectedRemoteVideos.length === 0 && !nextBindings) return;
+
+      setVideoBusy(true);
+      setVideoControlError(null);
+      try {
+        await Promise.all([
+          ...affectedRemoteVideos.map((video) =>
+            videoApi.sync(sessionId, {
+              offsetMs: video.offsetMs,
+              sync: video.sync,
+              videoId: video.id,
+              videoType: nextVideoType,
+              videoTrackId: track.id,
+              videoTrackName: nextName,
+              placementSource: video.placementSource,
+              placementConfidence: video.placementConfidence,
+            }),
+          ),
+          ...(currentWorkspace && nextBindings
+            ? [
+                saveLocalWorkspaceSessionVideoBindings(
+                  currentWorkspace.id,
+                  sessionId,
+                  nextBindings,
+                ).then(() => {
+                  setSessionBindings((prev) => ({
+                    track: prev?.track ?? null,
+                    videos: nextBindings,
+                  }));
+                }),
+              ]
+            : []),
+        ]);
+      } catch (error) {
+        setVideoControlError(getErrorMessage(error));
+      } finally {
+        setVideoBusy(false);
+      }
+    },
+    [currentWorkspace, sessionBindings?.videos, sessionId, sessionVideos, videoTrackDrafts],
+  );
 
   const postCompanionMessage = useCallback((message: unknown) => {
     companionChannelRef.current?.postMessage(message);
@@ -725,9 +1163,9 @@ function ReplayWorkspaceHostPage() {
   const sendLocalVideoToCompanion = useCallback(() => {
     if (!sessionId) return;
 
-    const nextLocalVideo = localVideoRef.current;
+    const nextLocalVideos = localVideosRef.current;
 
-    if (!nextLocalVideo) {
+    if (nextLocalVideos.length === 0) {
       postCompanionMessage({
         type: 'host_clear_local_video',
         sessionId,
@@ -736,49 +1174,54 @@ function ReplayWorkspaceHostPage() {
       return;
     }
 
-    postCompanionMessage({
-      type: 'host_local_video',
-      sessionId,
-      sentAt: Date.now(),
-      file: nextLocalVideo.file,
-      label: nextLocalVideo.file.name,
-      key: localVideoKey(nextLocalVideo.signature),
-      signature: nextLocalVideo.signature,
-      videoType: nextLocalVideo.videoType,
-      offsetMs: nextLocalVideo.offsetMs,
-      sync: nextLocalVideo.sync,
+    nextLocalVideos.forEach((video) => {
+      postCompanionMessage({
+        type: 'host_local_video',
+        sessionId,
+        sentAt: Date.now(),
+        file: video.file,
+        label: video.label ?? video.file.name,
+        key: localVideoKey(video.signature),
+        signature: video.signature,
+        videoType: video.videoType,
+        offsetMs: video.offsetMs,
+        sync: video.sync,
+      });
     });
   }, [postCompanionMessage, sessionId]);
 
   useEffect(() => {
-    localVideoRef.current = localVideo;
-    localVideoObjectUrlRef.current = localVideo?.objectUrl ?? null;
-  }, [localVideo]);
+    localVideosRef.current = localVideos;
+  }, [localVideos]);
 
   useEffect(() => {
     return () => {
-      if (localVideoObjectUrlRef.current) {
-        URL.revokeObjectURL(localVideoObjectUrlRef.current);
-      }
+      localVideosRef.current.forEach((video) => URL.revokeObjectURL(video.objectUrl));
+      localVideosRef.current = [];
     };
   }, []);
 
   useEffect(() => {
     if (!sessionId) return;
     setWorkspaceMode(loadWorkspaceMode(sessionId) ?? 'data');
-    setSplitDirection(loadSplitDirection(sessionId) ?? 'left-right');
   }, [sessionId]);
 
   useLayoutEffect(() => {
     if (!sessionId) return;
-    if (loadSplitDirection(sessionId) != null) return;
-    const el = stageCanvasRef.current;
-    if (!el) return;
-    const w = el.clientWidth;
-    const h = el.clientHeight;
-    if (w > 0 && h > 0) {
-      setSplitDirection(splitDirectionForAspectRatio(w, h));
+    splitDirectionInitializedRef.current = false;
+
+    const savedDirection = loadSplitDirection(sessionId);
+    if (savedDirection) {
+      setSplitDirection(savedDirection);
+      splitDirectionInitializedRef.current = true;
+      return;
     }
+
+    const el = stageCanvasRef.current;
+    const width = el?.clientWidth ?? (typeof window !== 'undefined' ? window.innerWidth : 0);
+    const height = el?.clientHeight ?? (typeof window !== 'undefined' ? window.innerHeight : 0);
+    setSplitDirection(splitDirectionForAspectRatio(width, height));
+    splitDirectionInitializedRef.current = true;
   }, [sessionId]);
 
   useLayoutEffect(() => {
@@ -808,26 +1251,33 @@ function ReplayWorkspaceHostPage() {
 
   useEffect(() => {
     if (!sessionId) return;
+    if (!splitDirectionInitializedRef.current) return;
     saveSplitDirection(sessionId, splitDirection);
   }, [sessionId, splitDirection]);
 
   useEffect(() => {
-    if (!sessionId || !localVideo) return;
-    saveLocalVideoPrefs(sessionId, localVideo.signature, {
-      offsetMs: localVideo.offsetMs,
-      sync: localVideo.sync,
-      videoType: localVideo.videoType,
+    if (!sessionId) return;
+    localVideos.forEach((video) => {
+      saveLocalVideoPrefs(sessionId, video.signature, {
+        videoTrackId: video.videoTrackId,
+        videoTrackName: video.videoTrackName,
+        offsetMs: video.offsetMs,
+        sync: video.sync,
+        placementSource: video.placementSource,
+        placementConfidence: video.placementConfidence,
+        videoType: video.videoType,
+      });
     });
-  }, [localVideo, sessionId]);
+  }, [localVideos, sessionId]);
 
   useEffect(() => {
-    if (activeVideo) return;
-    if (syncDialogOpen) {
-      setSyncDialogOpen(false);
-      setSyncSessionTimeMs(0);
-      setSyncVideoTimeMs(0);
-    }
-  }, [activeVideo, syncDialogOpen]);
+    if (!syncDialogOpen) return;
+    if (syncDialogVideo) return;
+    setSyncDialogOpen(false);
+    setSyncSessionTimeMs(0);
+    setSyncVideoTimeMs(0);
+    setSyncDialogClipKey(null);
+  }, [syncDialogOpen, syncDialogVideo]);
 
   useEffect(() => {
     const hasVideoContent =
@@ -940,11 +1390,7 @@ function ReplayWorkspaceHostPage() {
     if (lastCompanionReadyAtRef.current === 0) return;
     sendLocalVideoToCompanion();
   }, [
-    localVideo?.file,
-    localVideo?.offsetMs,
-    localVideo?.signature,
-    localVideo?.sync?.updatedAt,
-    localVideo?.videoType,
+    localVideos,
     sendLocalVideoToCompanion,
     sessionId,
   ]);
@@ -1090,14 +1536,13 @@ function ReplayWorkspaceHostPage() {
     setEvents([]);
     setMarks([]);
     setSessionVideos([]);
-    setActiveVideoKey(null);
-    setActiveRemoteVideoId(null);
+    setManageClipDetailKey(null);
     setVideoDraftUrl('');
     setVideoDraftType('flat');
     setCurrentTime(0);
     setIsPlaying(false);
     setWorkspaceWindow({ startMs: 0, endMs: 0 });
-    setDraftOffsetMs(null);
+    setTimelineDraftClip(null);
     setVideoStageError(null);
     setVideoClockMs(0);
     setVideoDurationMs(0);
@@ -1108,23 +1553,27 @@ function ReplayWorkspaceHostPage() {
     setVideoControlError(null);
     setSensorImportMessage(null);
     setManualWind(null);
+    telemetryWindowLoadSeqRef.current += 1;
 
     const load = async () => {
       if (currentWorkspace) {
         try {
-          const localBundle = await getLocalWorkspaceSessionBundle(
+          const localShell = await getLocalWorkspaceSessionShell(
             currentWorkspace.id,
             sessionId,
           );
-          if (localBundle) {
+          if (localShell) {
             return {
-              nextSession: localBundle.session,
-              nextTracks: localBundle.tracks,
-              nextTrackPointsById: localBundle.trackPointsById,
-              nextTelemetryDatasets: localBundle.telemetryDatasets,
-              nextEvents: localBundle.events,
-              nextMarks: localBundle.marks,
+              nextSession: localShell.session,
+              nextTracks: localShell.tracks,
+              nextTrackPointsById: Object.fromEntries(
+                localShell.tracks.map((track) => [track.id, [] as TrackPoint[]]),
+              ),
+              nextTelemetryDatasets: localShell.telemetryDatasets,
+              nextEvents: localShell.events,
+              nextMarks: localShell.marks,
               nextVideos: [] as SessionVideo[],
+              chunkedLocalWorkspaceId: currentWorkspace.id,
             };
           }
         } catch {
@@ -1171,6 +1620,7 @@ function ReplayWorkspaceHostPage() {
         nextEvents,
         nextMarks,
         nextVideos,
+        chunkedLocalWorkspaceId: null,
       };
     };
 
@@ -1183,6 +1633,7 @@ function ReplayWorkspaceHostPage() {
         nextEvents,
         nextMarks,
         nextVideos,
+        chunkedLocalWorkspaceId,
       }) => {
         if (cancelled) return;
         setSession(nextSession);
@@ -1201,13 +1652,28 @@ function ReplayWorkspaceHostPage() {
         setEvents(nextEvents);
         setMarks(nextMarks);
         setSessionVideos(nextVideos);
-        setActiveRemoteVideoId(nextVideos[0]?.id ?? null);
-        setActiveVideoKey(nextVideos[0] ? remoteVideoKey(nextVideos[0]) : null);
         const sessionDurMs = nextSession.stats.duration * 1000;
         setWorkspaceWindow({ startMs: 0, endMs: sessionDurMs });
         setVideoDraftUrl(nextVideos[0]?.url ?? '');
         setVideoDraftType(nextVideos[0]?.videoType ?? 'flat');
         setLoading(false);
+
+        if (chunkedLocalWorkspaceId) {
+          nextTracks.forEach((track) => {
+            void loadLocalWorkspaceTrackPointsInChunks(
+              chunkedLocalWorkspaceId,
+              sessionId,
+              track.id,
+              (chunk) => {
+                if (cancelled || chunk.trackId !== track.id || chunk.points.length === 0) return;
+                setTrackPointsById((prev) => ({
+                  ...prev,
+                  [track.id]: [...(prev[track.id] ?? []), ...chunk.points],
+                }));
+              },
+            );
+          });
+        }
       })
       .catch(() => {
         if (!cancelled) {
@@ -1219,8 +1685,6 @@ function ReplayWorkspaceHostPage() {
           setEvents([]);
           setMarks([]);
           setSessionVideos([]);
-          setActiveVideoKey(null);
-          setActiveRemoteVideoId(null);
           setVideoDraftUrl('');
           setVideoDraftType('flat');
           setLoading(false);
@@ -1229,9 +1693,9 @@ function ReplayWorkspaceHostPage() {
 
     return () => {
       cancelled = true;
-      setLocalVideo((prev) => {
-        if (prev) URL.revokeObjectURL(prev.objectUrl);
-        return null;
+      setLocalVideos((prev) => {
+        prev.forEach((video) => URL.revokeObjectURL(video.objectUrl));
+        return [];
       });
     };
   }, [currentWorkspace, sessionId]);
@@ -1281,6 +1745,65 @@ function ReplayWorkspaceHostPage() {
 
   const totalDuration = session ? session.stats.duration * 1000 : 0;
 
+  const handleImportSensorFiles = useCallback(
+    async (files: File[]) => {
+      if (!sessionId || files.length === 0) return;
+      setSensorImportMessage(null);
+      setVideoControlError(null);
+
+      try {
+        const parsed = await Promise.all(
+          files.map((file) =>
+            currentWorkspace
+              ? importLocalWorkspaceTelemetryFile(
+                  currentWorkspace.id,
+                  sessionId,
+                  file,
+                )
+              : parseLocalTelemetryFile(file, { sessionId }),
+          ),
+        );
+        const nextDatasets = parsed.map((item) => item.dataset);
+        const nextDatasetShells = nextDatasets.map(stripTelemetryDatasetSamples);
+        setTelemetryDatasets((prev) => {
+          const nextIds = new Set(nextDatasetShells.map((dataset) => dataset.id));
+          return [
+            ...prev.filter((dataset) => !nextIds.has(dataset.id)),
+            ...nextDatasetShells,
+          ];
+        });
+        const channelCount = nextDatasets.reduce(
+          (sum, dataset) => sum + dataset.channels.length,
+          0,
+        );
+        setSensorImportMessage(
+          `Imported ${nextDatasets.length} sensor source${
+            nextDatasets.length === 1 ? '' : 's'
+          } with ${channelCount} channel${channelCount === 1 ? '' : 's'}.`,
+        );
+        setTelemetryDataVersion((version) => version + 1);
+      } catch (error) {
+        setVideoControlError(getErrorMessage(error));
+      }
+    },
+    [currentWorkspace, sessionId],
+  );
+
+  const syncSessionJumpOptions = useMemo(
+    () =>
+      [...events]
+        .map((e) => ({
+          id: e.id,
+          sessionTimeMs: seekTimeFromEvent(e, totalDuration),
+          title: e.note?.trim() ? e.note : e.type.replace(/_/g, ' '),
+          subtitle: formatEventTimeLabel(e),
+          meta: formatEventMeta(e),
+        }))
+        .filter((x) => Number.isFinite(x.sessionTimeMs) && x.sessionTimeMs >= 0)
+        .sort((a, b) => a.sessionTimeMs - b.sessionTimeMs),
+    [events, totalDuration],
+  );
+
   const workspaceWindowEffective = useMemo((): WorkspaceWindowMs => {
     if (totalDuration <= 0) return { startMs: 0, endMs: 0 };
     const { startMs, endMs } = workspaceWindow;
@@ -1311,7 +1834,6 @@ function ReplayWorkspaceHostPage() {
     ],
   );
 
-  const effectiveOffsetMs = draftOffsetMs ?? activeVideo?.offsetMs ?? 0;
   const visibleStageVideoKeys = useMemo(() => {
     const contents =
       stageLayoutMode === 'split'
@@ -1324,8 +1846,75 @@ function ReplayWorkspaceHostPage() {
     );
   }, [leftStageContent, primaryStageContent, rightStageContent, stageLayoutMode]);
   const hasInlineVideoStage = Boolean(
-    activeVideo && visibleStageVideoKeys.has(activeVideo.key),
+    activeVideo && visibleStageVideoKeys.has(activeVideo.videoTrackId),
   );
+  const telemetryStageVisible = useMemo(() => {
+    if (stageLayoutMode === 'split') {
+      return leftStageContent === 'telemetry' || rightStageContent === 'telemetry';
+    }
+    return primaryStageContent === 'telemetry';
+  }, [leftStageContent, primaryStageContent, rightStageContent, stageLayoutMode]);
+  const telemetryConsumerVisible =
+    telemetryStageVisible || (isDesktopLayout && !rightCollapsed);
+  const telemetryLoadBucket = Math.floor(currentTime / 30000);
+  const telemetryLoadWindow = useMemo(() => {
+    const center = telemetryLoadBucket * 30000;
+    return {
+      startMs: Math.max(workspaceWindowEffective.startMs, center - 120000),
+      endMs: Math.min(workspaceWindowEffective.endMs, center + 120000),
+    };
+  }, [
+    telemetryLoadBucket,
+    workspaceWindowEffective.endMs,
+    workspaceWindowEffective.startMs,
+  ]);
+
+  useEffect(() => {
+    if (!currentWorkspace || !sessionId || !telemetryConsumerVisible) return;
+    if (telemetryLoadWindow.endMs <= telemetryLoadWindow.startMs) return;
+
+    let cancelled = false;
+    const seq = ++telemetryWindowLoadSeqRef.current;
+    const windowDatasets = new Map<string, TelemetryDataset>();
+    void loadLocalWorkspaceTelemetryDatasetsInChunks(
+      currentWorkspace.id,
+      sessionId,
+      (chunk) => {
+        if (cancelled || seq !== telemetryWindowLoadSeqRef.current) return;
+        const current = windowDatasets.get(chunk.datasetId);
+        const merged = current
+          ? {
+              ...current,
+              channels: current.channels.map((channel) => {
+                const chunkChannel = chunk.dataset.channels.find(
+                  (item) => item.id === channel.id,
+                );
+                return {
+                  ...channel,
+                  samples: [
+                    ...channel.samples,
+                    ...(chunkChannel?.samples ?? []),
+                  ],
+                };
+              }),
+            }
+          : chunk.dataset;
+        windowDatasets.set(chunk.datasetId, merged);
+        setTelemetryDatasets(Array.from(windowDatasets.values()));
+      },
+      { timeWindow: telemetryLoadWindow },
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentWorkspace,
+    sessionId,
+    telemetryDataVersion,
+    telemetryLoadWindow,
+    telemetryConsumerVisible,
+  ]);
 
   useEffect(() => {
     if (totalDuration <= 0) return;
@@ -1435,22 +2024,33 @@ function ReplayWorkspaceHostPage() {
   }, [activeVideo, videoClocksByKey, videoDurationsByKey]);
 
   useEffect(() => {
+    currentTimeRef.current = currentTime;
+  }, [currentTime]);
+
+  useEffect(() => {
     if (!isPlaying || totalDuration === 0) return;
 
     lastFrameRef.current = performance.now();
+    lastPlaybackStateUpdateRef.current = lastFrameRef.current;
     const endMs = workspaceWindowEffective.endMs;
 
     const tick = (now: number) => {
       const delta = (now - lastFrameRef.current) * playbackSpeed;
       lastFrameRef.current = now;
-      setCurrentTime((prev) => {
-        const next = prev + delta;
-        if (next >= endMs) {
-          setIsPlaying(false);
-          return endMs;
-        }
-        return next;
-      });
+      const next = currentTimeRef.current + delta;
+      currentTimeRef.current = next >= endMs ? endMs : next;
+
+      if (next >= endMs) {
+        setCurrentTime(endMs);
+        setIsPlaying(false);
+        return;
+      }
+
+      if (now - lastPlaybackStateUpdateRef.current >= PLAYBACK_STATE_UPDATE_MS) {
+        lastPlaybackStateUpdateRef.current = now;
+        setCurrentTime(currentTimeRef.current);
+      }
+
       animRef.current = requestAnimationFrame(tick);
     };
 
@@ -1579,29 +2179,23 @@ function ReplayWorkspaceHostPage() {
       (video) => !recommendedPaths.has(video.relativePath),
     );
   }, [recommendedWorkspaceVideos, workspaceVideoFiles]);
-  const boundWorkspaceVideoBindings = sessionBindings?.videos ?? [];
   const stageContentOptions = useMemo(
     () => [
       { value: 'map' as WorkspaceStageContent, label: 'Map' },
       { value: 'telemetry' as WorkspaceStageContent, label: 'Telemetry' },
-      ...videoSources.map((video, index) => ({
-        value: `video:${video.key}` as WorkspaceStageContent,
-        label: `Video ${index + 1}: ${video.label ?? video.url}`,
+      ...videoTimelineTracks.map((track, index) => ({
+        value: `video:${track.id}` as WorkspaceStageContent,
+        label: `Video Track ${index + 1}: ${track.label}`,
       })),
     ],
-    [videoSources],
+    [videoTimelineTracks],
   );
 
   const selectStageContent = useCallback(
     (content: WorkspaceStageContent, setter: (content: WorkspaceStageContent) => void) => {
       setter(content);
-      const videoKey = videoKeyFromStageContent(content);
-      if (!videoKey) return;
-      const selectedVideo = videoSources.find((video) => video.key === videoKey);
-      if (!selectedVideo) return;
-      selectActiveVideo(selectedVideo);
     },
-    [selectActiveVideo, videoSources],
+    [],
   );
 
   useEffect(() => {
@@ -1652,7 +2246,8 @@ function ReplayWorkspaceHostPage() {
       syncVideoTimeMs,
       currentPoint,
       activeTrackId: activeTrack?.id ?? primaryTrackId,
-      activeTrackPoints: telemetry,
+      activeTrackPoints: undefined,
+      telemetryDatasets: undefined,
       windDir: manualWind?.dir ?? (currentPoint ? getWindDir(currentPoint) : undefined),
       windSpeed: manualWind?.speed ?? (currentPoint ? getWindSpeed(currentPoint) : undefined),
       nearestEvent,
@@ -1661,11 +2256,15 @@ function ReplayWorkspaceHostPage() {
             key: activeVideo.key,
             origin: activeVideo.origin,
             id: activeVideo.id,
+            videoTrackId: activeVideo.videoTrackId,
+            videoTrackName: activeVideo.videoTrackName,
             label: activeVideo.label,
             url: activeVideo.origin === 'remote' ? activeVideo.url : undefined,
             videoType: activeVideo.videoType,
             offsetMs: activeVideo.offsetMs,
             sync: activeVideo.sync,
+            placementSource: activeVideo.placementSource,
+            placementConfidence: activeVideo.placementConfidence,
             signature: activeVideo.signature,
           }
         : null,
@@ -1673,11 +2272,15 @@ function ReplayWorkspaceHostPage() {
         key: video.key,
         origin: video.origin,
         id: video.id,
+        videoTrackId: video.videoTrackId,
+        videoTrackName: video.videoTrackName,
         label: video.label,
         url: video.origin === 'remote' ? video.url : undefined,
         videoType: video.videoType,
         offsetMs: video.offsetMs,
         sync: video.sync,
+        placementSource: video.placementSource,
+        placementConfidence: video.placementConfidence,
         signature: video.signature,
       })),
       selection,
@@ -1704,7 +2307,6 @@ function ReplayWorkspaceHostPage() {
     syncDialogOpen,
     syncSessionTimeMs,
     syncVideoTimeMs,
-    telemetry,
     totalDuration,
     workspaceWindowEffective,
     primaryTrackId,
@@ -1937,6 +2539,26 @@ function ReplayWorkspaceHostPage() {
     [sessionId],
   );
 
+  const handleDeleteMark = useCallback(
+    async (mark: Mark) => {
+      if (!sessionId) return;
+      const label = mark.name ?? mark.type;
+      if (!window.confirm(`Delete mark "${label}"?`)) return;
+
+      await markApi.delete(sessionId, mark.id);
+      setMarks((prev) => prev.filter((item) => item.id !== mark.id));
+      setSelection((prev) =>
+        prev.markId === mark.id
+          ? {
+              ...prev,
+              markId: null,
+            }
+          : prev,
+      );
+    },
+    [sessionId],
+  );
+
   const handleFocusEvent = useCallback((event: SessionEvent) => {
     const eventTrackId = resolveEventTrackId(event, primaryTrackId);
     setActiveTrackId(eventTrackId);
@@ -2047,12 +2669,14 @@ function ReplayWorkspaceHostPage() {
     });
   }, []);
 
-  const clearLocalVideo = useCallback(() => {
-    setLocalVideo((prev) => {
-      if (prev) URL.revokeObjectURL(prev.objectUrl);
-      return null;
-    });
-    setActiveVideoKey((prev) => (prev?.startsWith('local:') ? null : prev));
+  const removeLocalClipByKey = useCallback((clipKey: string) => {
+    setLocalVideos((prev) =>
+      prev.filter((video) => {
+        const remove = localVideoKey(video.signature) === clipKey;
+        if (remove) URL.revokeObjectURL(video.objectUrl);
+        return !remove;
+      }),
+    );
     setVideoStageError(null);
     setVideoClockMs(0);
     setVideoDurationMs(0);
@@ -2062,45 +2686,108 @@ function ReplayWorkspaceHostPage() {
   }, []);
 
   const getDefaultOffsetForFile = useCallback(
-    (file: File): number => {
-      if (!session || totalDuration <= 0) return 0;
+    (file: File, durationMs = 0): number => {
+      if (!sessionWithEffectiveTrackOrigin || totalDuration <= 0) return 0;
+      const videoWallClockStartMs = getVideoFileWallClockStartMs(file, durationMs);
+      if (videoWallClockStartMs == null) return 0;
       return (
         tryComputeVideoOffsetFromWallClock(
-          session,
+          sessionWithEffectiveTrackOrigin,
           totalDuration,
-          file.lastModified,
+          videoWallClockStartMs,
         ) ?? 0
       );
     },
-    [session, totalDuration],
+    [sessionWithEffectiveTrackOrigin, totalDuration],
   );
 
   const getDefaultSyncForFile = useCallback(
-    (file: File): VideoSyncBinding => {
+    (file: File, durationMs = 0): VideoSyncBinding => {
+      const videoWallClockStartMs = getVideoFileWallClockStartMs(file, durationMs);
       const wallClockOffsetMs =
-        session && totalDuration > 0
-          ? tryComputeVideoOffsetFromWallClock(session, totalDuration, file.lastModified)
+        sessionWithEffectiveTrackOrigin && totalDuration > 0 && videoWallClockStartMs != null
+          ? tryComputeVideoOffsetFromWallClock(
+              sessionWithEffectiveTrackOrigin,
+              totalDuration,
+              videoWallClockStartMs,
+            )
           : null;
-      if (session?.trackTimeOriginUnixMs != null && wallClockOffsetMs != null) {
+      if (effectiveTrackTimeOriginUnixMs != null && wallClockOffsetMs != null) {
         return createVideoSyncBindingFromAnchor(
           {
             videoTimeMs: 0,
             trackTimeMs: wallClockOffsetMs,
-            realUnixMs: file.lastModified,
+            realUnixMs: videoWallClockStartMs ?? undefined,
             source: 'auto-file-time',
             confidence: 'medium',
           },
-          { trackTimeOriginUnixMs: session.trackTimeOriginUnixMs },
+          { trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs },
         );
       }
-      const offsetMs = getDefaultOffsetForFile(file);
+      const offsetMs = getDefaultOffsetForFile(file, durationMs);
       return createOffsetOnlyVideoSync(offsetMs, {
-        trackTimeOriginUnixMs: session?.trackTimeOriginUnixMs,
+        trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs,
         source: 'manual-video-track',
         confidence: 'low',
       });
     },
-    [getDefaultOffsetForFile, session, totalDuration],
+    [
+      effectiveTrackTimeOriginUnixMs,
+      getDefaultOffsetForFile,
+      sessionWithEffectiveTrackOrigin,
+      totalDuration,
+    ],
+  );
+
+  const getTrackAppendStartMs = useCallback(
+    (trackId: string, pendingClipEnds: number[] = []): number => {
+      const track = videoTimelineTracks.find((item) => item.id === trackId);
+      const existingEnds =
+        track?.clips.map((clip) => {
+          const durationMs = clip.durationMs || videoDurationsByKey[clip.source.key] || 0;
+          return clip.source.offsetMs + Math.max(0, durationMs);
+        }) ?? [];
+      return Math.max(0, ...existingEnds, ...pendingClipEnds);
+    },
+    [videoDurationsByKey, videoTimelineTracks],
+  );
+
+  const getDefaultPlacementForFile = useCallback(
+    (
+      file: File,
+      targetTrackId: string,
+      durationMs = 0,
+      pendingClipEnds: number[] = [],
+    ): VideoPlacement => {
+      if (sessionWithEffectiveTrackOrigin && totalDuration > 0) {
+        const videoWallClockStartMs = getVideoFileWallClockStartMs(file, durationMs);
+        const wallClockOffsetMs =
+          videoWallClockStartMs != null
+            ? tryComputeVideoOffsetFromWallClock(
+                sessionWithEffectiveTrackOrigin,
+                totalDuration,
+                videoWallClockStartMs,
+              )
+            : null;
+        if (wallClockOffsetMs != null) {
+          pendingClipEnds.push(wallClockOffsetMs + Math.max(0, durationMs));
+          return {
+            offsetMs: wallClockOffsetMs,
+            placementSource: 'file-time',
+            placementConfidence: 'medium',
+          };
+        }
+      }
+
+      const offsetMs = getTrackAppendStartMs(targetTrackId, pendingClipEnds);
+      pendingClipEnds.push(offsetMs + Math.max(0, durationMs));
+      return {
+        offsetMs,
+        placementSource: 'sequential-fallback',
+        placementConfidence: 'low',
+      };
+    },
+    [getTrackAppendStartMs, sessionWithEffectiveTrackOrigin, totalDuration],
   );
 
   const applyLocalVideoSelection = useCallback(
@@ -2113,6 +2800,10 @@ function ReplayWorkspaceHostPage() {
         nextVideoType?: VideoType;
         nextOffsetMs?: number;
         nextSync?: VideoSyncBinding;
+        videoTrackId?: string;
+        videoTrackName?: string;
+        placementSource?: VideoPlacementSource;
+        placementConfidence?: VideoPlacementConfidence;
         promptReview?: boolean;
       },
     ) => {
@@ -2129,27 +2820,39 @@ function ReplayWorkspaceHostPage() {
       const resolvedSync = normalizeVideoSyncBinding(
         resolvedOffsetMs,
         options?.nextSync ?? savedPrefs?.sync ?? getDefaultSyncForFile(file),
-        { trackTimeOriginUnixMs: session?.trackTimeOriginUnixMs },
+        { trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs },
       );
 
       const nextVideo: LocalSessionVideo = {
         file,
         objectUrl,
         signature,
+        videoTrackId: options?.videoTrackId ?? savedPrefs?.videoTrackId,
+        videoTrackName: options?.videoTrackName ?? savedPrefs?.videoTrackName,
         videoType: options?.nextVideoType ?? savedPrefs?.videoType ?? videoDraftType,
         offsetMs: resolvedSync.offsetMs,
         sync: resolvedSync,
+        placementSource: options?.placementSource ?? savedPrefs?.placementSource,
+        placementConfidence: options?.placementConfidence ?? savedPrefs?.placementConfidence,
         sourceKind: options?.sourceKind ?? 'file_picker',
         label: options?.label ?? file.name,
         workspaceRelativePath: options?.workspaceRelativePath,
       };
 
-      setLocalVideo((prev) => {
-        if (prev) URL.revokeObjectURL(prev.objectUrl);
-        return nextVideo;
+      setLocalVideos((prev) => {
+        const next = prev.filter((video) => {
+          const sameSignature = video.signature === nextVideo.signature;
+          const sameWorkspacePath =
+            nextVideo.workspaceRelativePath &&
+            video.workspaceRelativePath === nextVideo.workspaceRelativePath;
+          const shouldReplace = sameSignature || sameWorkspacePath;
+          if (shouldReplace) URL.revokeObjectURL(video.objectUrl);
+          return !shouldReplace;
+        });
+        return [...next, nextVideo];
       });
-      setActiveVideoKey(localVideoKey(nextVideo.signature));
       setVideoDraftType(nextVideo.videoType);
+      if (nextVideo.videoTrackId) setVideoTargetTrackId(nextVideo.videoTrackId);
       setVideoControlError(null);
       setVideoStageError(null);
       setVideoClockMs(0);
@@ -2158,9 +2861,14 @@ function ReplayWorkspaceHostPage() {
       setSyncSessionTimeMs(0);
       setSyncVideoTimeMs(0);
       setVideoNeedsReview(options?.promptReview ?? savedPrefs == null);
-      setVideoDialogTab('recommended');
     },
-    [getDefaultOffsetForFile, getDefaultSyncForFile, session?.trackTimeOriginUnixMs, sessionId, videoDraftType],
+    [
+      getDefaultOffsetForFile,
+      getDefaultSyncForFile,
+      effectiveTrackTimeOriginUnixMs,
+      sessionId,
+      videoDraftType,
+    ],
   );
 
   const saveWorkspaceVideoBinding = useCallback(
@@ -2169,23 +2877,31 @@ function ReplayWorkspaceHostPage() {
       fileName: string;
       label?: string;
       videoType: VideoType;
+      videoTrackId?: string;
+      videoTrackName?: string;
       offsetMs: number;
       sync?: VideoSyncBinding;
+      placementSource?: VideoPlacementSource;
+      placementConfidence?: VideoPlacementConfidence;
     }) => {
       if (!currentWorkspace || !sessionId) return;
       const sync = normalizeVideoSyncBinding(input.offsetMs, input.sync, {
-        trackTimeOriginUnixMs: session?.trackTimeOriginUnixMs,
+        trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs,
       });
 
       const videoBinding: WorkspaceVideoBinding = {
         path: `../../${input.relativePath.replace(/^\.?\//, '')}`,
         fileName: input.fileName,
+        videoTrackId: input.videoTrackId,
+        videoTrackName: input.videoTrackName,
         label: input.label,
         sourceKind: 'workspace_discovery',
         storageMode: 'workspace_relative_ref',
         videoType: input.videoType,
         offsetMs: sync.offsetMs,
         sync,
+        placementSource: input.placementSource,
+        placementConfidence: input.placementConfidence,
         copiedToWorkspace: false,
         confirmed: true,
         boundAt: new Date().toISOString(),
@@ -2202,7 +2918,7 @@ function ReplayWorkspaceHostPage() {
         videos: nextVideos,
       }));
     },
-    [currentWorkspace, session?.trackTimeOriginUnixMs, sessionBindings?.videos, sessionId],
+    [currentWorkspace, effectiveTrackTimeOriginUnixMs, sessionBindings?.videos, sessionId],
   );
 
   const removeWorkspaceVideoBinding = useCallback(
@@ -2224,27 +2940,42 @@ function ReplayWorkspaceHostPage() {
     [currentWorkspace, sessionBindings?.videos, sessionId],
   );
 
-  const updateActiveSync = useCallback(
-    async (nextSync: VideoSyncBinding) => {
-      if (!sessionId || !activeVideo) return;
+  const applyVideoSyncForSource = useCallback(
+    async (video: ActiveVideoSource, nextSync: VideoSyncBinding) => {
+      if (!sessionId) return;
       const resolvedSync = normalizeVideoSyncBinding(nextSync.offsetMs, nextSync, {
-        trackTimeOriginUnixMs: session?.trackTimeOriginUnixMs,
+        trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs,
       });
       const nextOffsetMs = resolvedSync.offsetMs;
+      const localRow = getLocalVideoRow(video);
 
-      if (activeVideo.origin === 'local') {
-        setLocalVideo((prev) =>
-          prev ? { ...prev, offsetMs: nextOffsetMs, sync: resolvedSync } : prev,
+      if (video.origin === 'local') {
+        setLocalVideos((prev) =>
+          prev.map((row) =>
+            localVideoKey(row.signature) === video.key
+              ? {
+                  ...row,
+                  offsetMs: nextOffsetMs,
+                  sync: resolvedSync,
+                  placementSource: 'manual',
+                  placementConfidence: 'low',
+                }
+              : row,
+          ),
         );
-        if (localVideo?.sourceKind === 'workspace' && localVideo.workspaceRelativePath) {
+        if (localRow?.sourceKind === 'workspace' && localRow.workspaceRelativePath) {
           try {
             await saveWorkspaceVideoBinding({
-              relativePath: localVideo.workspaceRelativePath,
-              fileName: localVideo.file.name,
-              label: localVideo.label ?? localVideo.file.name,
-              videoType: localVideo.videoType,
+              relativePath: localRow.workspaceRelativePath,
+              fileName: localRow.file.name,
+              label: localRow.label ?? localRow.file.name,
+              videoType: localRow.videoType,
+              videoTrackId: localRow.videoTrackId,
+              videoTrackName: localRow.videoTrackName,
               offsetMs: nextOffsetMs,
               sync: resolvedSync,
+              placementSource: 'manual',
+              placementConfidence: 'low',
             });
           } catch (error) {
             setVideoControlError(getErrorMessage(error));
@@ -2254,15 +2985,17 @@ function ReplayWorkspaceHostPage() {
       }
 
       setSessionVideos((prev) =>
-        prev.map((video, index) =>
-          (activeVideo.id ? video.id === activeVideo.id : index === 0)
+        prev.map((row, index) =>
+          (video.id ? row.id === video.id : index === 0)
             ? {
-                ...video,
+                ...row,
                 offsetMs: nextOffsetMs,
                 sync: resolvedSync,
+                placementSource: 'manual',
+                placementConfidence: 'low',
                 updatedAt: new Date().toISOString(),
               }
-            : video,
+            : row,
         ),
       );
 
@@ -2270,46 +3003,294 @@ function ReplayWorkspaceHostPage() {
         const saved = await videoApi.sync(sessionId, {
           offsetMs: nextOffsetMs,
           sync: resolvedSync,
-          videoId: activeVideo.id,
+          videoId: video.id,
+          placementSource: 'manual',
+          placementConfidence: 'low',
         });
         setSessionVideos((prev) =>
-          prev.map((video, index) =>
-            (saved.id ? video.id === saved.id : index === 0) ? saved : video,
+          prev.map((row, index) =>
+            (saved.id ? row.id === saved.id : index === 0) ? saved : row,
           ),
         );
       } catch (error) {
         setVideoControlError(getErrorMessage(error));
       }
     },
-    [activeVideo, localVideo, saveWorkspaceVideoBinding, session?.trackTimeOriginUnixMs, sessionId],
+    [
+      getLocalVideoRow,
+      saveWorkspaceVideoBinding,
+      effectiveTrackTimeOriginUnixMs,
+      sessionId,
+    ],
+  );
+
+  const updateActiveSync = useCallback(
+    async (nextSync: VideoSyncBinding) => {
+      if (!syncDialogVideo) return;
+      await applyVideoSyncForSource(syncDialogVideo, nextSync);
+    },
+    [applyVideoSyncForSource, syncDialogVideo],
+  );
+
+  const moveClipToTrack = useCallback(
+    async (video: ActiveVideoSource, target: VideoTrackTarget) => {
+      if (!sessionId) return;
+
+      const localRow = getLocalVideoRow(video);
+
+      if (video.origin === 'local') {
+        setLocalVideos((prev) =>
+          prev.map((row) =>
+            localVideoKey(row.signature) === video.key
+              ? {
+                  ...row,
+                  videoTrackId: target.id,
+                  videoTrackName: target.name,
+                }
+              : row,
+          ),
+        );
+        if (localRow?.sourceKind === 'workspace' && localRow.workspaceRelativePath) {
+          try {
+            await saveWorkspaceVideoBinding({
+              relativePath: localRow.workspaceRelativePath,
+              fileName: localRow.file.name,
+              label: localRow.label ?? localRow.file.name,
+              videoType: localRow.videoType,
+              videoTrackId: target.id,
+              videoTrackName: target.name,
+              offsetMs: localRow.offsetMs,
+              sync: localRow.sync,
+              placementSource: localRow.placementSource,
+              placementConfidence: localRow.placementConfidence,
+            });
+          } catch (error) {
+            setVideoControlError(getErrorMessage(error));
+          }
+        }
+        setVideoTargetTrackId(target.id);
+        setVideoNewTrackName('');
+        return;
+      }
+
+      setSessionVideos((prev) =>
+        prev.map((row, index) =>
+          (video.id ? row.id === video.id : index === 0)
+            ? {
+                ...row,
+                videoTrackId: target.id,
+                videoTrackName: target.name,
+                updatedAt: new Date().toISOString(),
+              }
+            : row,
+        ),
+      );
+
+      try {
+        const saved = await videoApi.sync(sessionId, {
+          offsetMs: video.offsetMs,
+          sync: video.sync,
+          videoId: video.id,
+          videoTrackId: target.id,
+          videoTrackName: target.name,
+          placementSource: video.placementSource,
+          placementConfidence: video.placementConfidence,
+        });
+        setSessionVideos((prev) =>
+          prev.map((row, index) =>
+            (saved.id ? row.id === saved.id : index === 0) ? saved : row,
+          ),
+        );
+        setVideoTargetTrackId(target.id);
+        setVideoNewTrackName('');
+      } catch (error) {
+        setVideoControlError(getErrorMessage(error));
+      }
+    },
+    [getLocalVideoRow, saveWorkspaceVideoBinding, sessionId],
+  );
+
+  const updateVideoOffsetForClipKey = useCallback(
+    async (clipKey: string, nextOffsetMs: number) => {
+      const src = videoSources.find((video) => video.key === clipKey);
+      if (!src) return;
+      const nextSync = createOffsetOnlyVideoSync(Math.round(nextOffsetMs), {
+        trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs,
+        source: 'manual-video-track',
+        confidence: 'low',
+      });
+      await applyVideoSyncForSource(src, nextSync);
+    },
+    [applyVideoSyncForSource, effectiveTrackTimeOriginUnixMs, videoSources],
   );
 
   const updateActiveOffset = useCallback(
     async (nextOffsetMs: number) => {
-      const nextSync = createOffsetOnlyVideoSync(Math.round(nextOffsetMs), {
-        trackTimeOriginUnixMs: session?.trackTimeOriginUnixMs,
-        source: 'manual-video-track',
-        confidence: 'low',
-      });
-      await updateActiveSync(nextSync);
+      if (!syncDialogVideo) return;
+      await updateVideoOffsetForClipKey(syncDialogVideo.key, nextOffsetMs);
     },
-    [session?.trackTimeOriginUnixMs, updateActiveSync],
+    [syncDialogVideo, updateVideoOffsetForClipKey],
   );
 
-  const handleCommitVideoOffsetFromTimeline = useCallback(
-    (ms: number, videoKey?: string) => {
-      if (videoKey && videoKey !== activeVideo?.key) {
-        const selected = videoSources.find((video) => video.key === videoKey) ?? null;
-        if (selected) {
-          selectActiveVideo(selected);
-        }
+  const buildShiftedVideoSync = useCallback(
+    (video: ActiveVideoSource, deltaMs: number): VideoSyncBinding => {
+      const nextOffsetMs = Math.round(video.offsetMs + deltaMs);
+      if (!video.sync) {
+        return createOffsetOnlyVideoSync(nextOffsetMs, {
+          trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs,
+          source: 'manual-video-track',
+          confidence: 'low',
+        });
       }
-      void updateActiveOffset(Math.round(ms));
+
+      return normalizeVideoSyncBinding(
+        nextOffsetMs,
+        {
+          ...video.sync,
+          offsetMs: nextOffsetMs,
+          anchors: video.sync.anchors.map((anchor) => ({
+            ...anchor,
+            trackTimeMs: Math.round(anchor.trackTimeMs + deltaMs),
+          })),
+          updatedAt: new Date().toISOString(),
+        },
+        { trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs },
+      );
     },
-    [activeVideo?.key, selectActiveVideo, updateActiveOffset, videoSources],
+    [effectiveTrackTimeOriginUnixMs],
   );
 
-  const handleLinkVideo = useCallback(async () => {
+  const shiftVideoTrackByMs = useCallback(
+    async (trackId: string, deltaMs: number) => {
+      if (!sessionId) return;
+      const track = videoTimelineTracks.find((item) => item.id === trackId);
+      if (!track || track.clips.length === 0) return;
+
+      const shiftedByKey = new Map<
+        string,
+        { offsetMs: number; sync: VideoSyncBinding }
+      >();
+      track.clips.forEach((clip) => {
+        const sync = buildShiftedVideoSync(clip.source, deltaMs);
+        shiftedByKey.set(clip.source.key, {
+          offsetMs: sync.offsetMs,
+          sync,
+        });
+      });
+
+      setVideoBusy(true);
+      setVideoControlError(null);
+
+      setLocalVideos((prev) =>
+        prev.map((video) => {
+          const shifted = shiftedByKey.get(localVideoKey(video.signature));
+          return shifted
+            ? {
+                ...video,
+                offsetMs: shifted.offsetMs,
+                sync: shifted.sync,
+                placementSource: 'manual',
+                placementConfidence: 'low',
+              }
+            : video;
+        }),
+      );
+      setSessionVideos((prev) =>
+        prev.map((video) => {
+          const shifted = shiftedByKey.get(remoteVideoKey(video));
+          return shifted
+            ? {
+                ...video,
+                offsetMs: shifted.offsetMs,
+                sync: shifted.sync,
+                placementSource: 'manual',
+                placementConfidence: 'low',
+                updatedAt: new Date().toISOString(),
+              }
+            : video;
+        }),
+      );
+
+      try {
+        await Promise.all(
+          localVideos
+            .filter((video) => shiftedByKey.has(localVideoKey(video.signature)))
+            .map((video) => {
+              const shifted = shiftedByKey.get(localVideoKey(video.signature));
+              if (
+                !shifted ||
+                video.sourceKind !== 'workspace' ||
+                !video.workspaceRelativePath
+              ) {
+                return Promise.resolve();
+              }
+              return saveWorkspaceVideoBinding({
+                relativePath: video.workspaceRelativePath,
+                fileName: video.file.name,
+                label: video.label ?? video.file.name,
+                videoType: video.videoType,
+                videoTrackId: video.videoTrackId,
+                videoTrackName: video.videoTrackName,
+                offsetMs: shifted.offsetMs,
+                sync: shifted.sync,
+                placementSource: 'manual',
+                placementConfidence: 'low',
+              });
+            }),
+        );
+
+        const savedRemoteVideos = await Promise.all(
+          sessionVideos
+            .filter((video) => shiftedByKey.has(remoteVideoKey(video)))
+            .map((video) => {
+              const shifted = shiftedByKey.get(remoteVideoKey(video))!;
+              return videoApi.sync(sessionId, {
+                offsetMs: shifted.offsetMs,
+                sync: shifted.sync,
+                videoId: video.id,
+                videoTrackId: video.videoTrackId,
+                videoTrackName: video.videoTrackName,
+                placementSource: 'manual',
+                placementConfidence: 'low',
+              });
+            }),
+        );
+
+        if (savedRemoteVideos.length > 0) {
+          setSessionVideos((prev) =>
+            prev.map((video, index) => {
+              const saved = savedRemoteVideos.find((item) =>
+                item.id ? item.id === video.id : index === 0,
+              );
+              return saved ?? video;
+            }),
+          );
+        }
+      } catch (error) {
+        setVideoControlError(getErrorMessage(error));
+      } finally {
+        setVideoBusy(false);
+      }
+    },
+    [
+      buildShiftedVideoSync,
+      localVideos,
+      saveWorkspaceVideoBinding,
+      sessionId,
+      sessionVideos,
+      videoTimelineTracks,
+    ],
+  );
+
+  const handleCommitVideoClipOffsetFromTimeline = useCallback(
+    (ms: number, clipKey: string) => {
+      setTimelineDraftClip(null);
+      void updateVideoOffsetForClipKey(clipKey, Math.round(ms));
+    },
+    [updateVideoOffsetForClipKey],
+  );
+
+  const handleLinkVideo = useCallback(async (target?: VideoTrackTarget & { videoType?: VideoType }) => {
     if (!sessionId) return;
     const trimmed = videoDraftUrl.trim();
     if (!trimmed) {
@@ -2328,21 +3309,38 @@ function ReplayWorkspaceHostPage() {
     setVideoControlError(null);
 
     try {
-      const initialSync = createOffsetOnlyVideoSync(0, {
-        trackTimeOriginUnixMs: session?.trackTimeOriginUnixMs,
+      const targetTrack =
+        target ??
+        resolveVideoTrackTarget({
+          selectedTrackId: videoTargetTrackId,
+          newTrackName: videoNewTrackName,
+          existingTracks: videoTimelineTracks,
+          sessionId,
+        });
+      const placement: VideoPlacement = {
+        offsetMs: getTrackAppendStartMs(targetTrack.id),
+        placementSource: 'sequential-fallback',
+        placementConfidence: 'low',
+      };
+      const initialSync = createOffsetOnlyVideoSync(placement.offsetMs, {
+        trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs,
         source: 'manual-video-track',
         confidence: 'low',
       });
       const linked = await videoApi.link(sessionId, {
         videoUrl: trimmed,
-        videoType: videoDraftType,
+        videoType: target?.videoType ?? videoDraftType,
+        videoTrackId: targetTrack.id,
+        videoTrackName: targetTrack.name,
         label: deriveVideoLabelFromUrl(trimmed),
         offsetMs: initialSync.offsetMs,
         sync: initialSync,
+        placementSource: placement.placementSource,
+        placementConfidence: placement.placementConfidence,
       });
       setSessionVideos((prev) => [...prev, linked]);
-      setActiveRemoteVideoId(linked.id ?? null);
-      setActiveVideoKey(remoteVideoKey(linked));
+      setVideoTargetTrackId(linked.videoTrackId ?? targetTrack.id);
+      setVideoNewTrackName('');
       setVideoDraftUrl(linked.url);
       setVideoDraftType(linked.videoType);
       setVideoStageError(null);
@@ -2352,33 +3350,92 @@ function ReplayWorkspaceHostPage() {
       setSyncSessionTimeMs(0);
       setSyncVideoTimeMs(0);
       setVideoNeedsReview(true);
-      setVideoDialogTab('recommended');
     } catch (error) {
       setVideoControlError(getErrorMessage(error));
     } finally {
       setVideoBusy(false);
     }
-  }, [clearLocalVideo, session?.trackTimeOriginUnixMs, sessionId, videoDraftType, videoDraftUrl]);
+  }, [
+    effectiveTrackTimeOriginUnixMs,
+    getTrackAppendStartMs,
+    sessionId,
+    videoDraftType,
+    videoDraftUrl,
+    videoNewTrackName,
+    videoTargetTrackId,
+    videoTimelineTracks,
+  ]);
 
-  const handleSelectLocalVideo = useCallback(
-    async (file: File) => {
+  const handleSelectLocalVideos = useCallback(
+    async (files: File[], target?: VideoTrackTarget & { videoType?: VideoType }) => {
+      if (files.length === 0 || !sessionId) return;
       try {
         setVideoControlError(null);
-        const signature = sessionId ? getLocalVideoSignature(file) : null;
-        const savedPrefs =
-          sessionId && signature ? loadLocalVideoPrefs(sessionId, signature) : null;
-        const detected = savedPrefs ? null : await detectVideoTypeFromFile(file);
-        applyLocalVideoSelection(file, {
-          sourceKind: 'file_picker',
-          label: file.name,
-          nextVideoType: detected?.videoType,
-          promptReview: true,
-        });
+        const targetTrack =
+          target ??
+          resolveVideoTrackTarget({
+            selectedTrackId: videoTargetTrackId,
+            newTrackName: videoNewTrackName,
+            existingTracks: videoTimelineTracks,
+            sessionId,
+          });
+        const pendingClipEnds: number[] = [];
+
+        for (const file of files) {
+          const signature = getLocalVideoSignature(file);
+          const savedPrefs = loadLocalVideoPrefs(sessionId, signature);
+          const [durationMs, detected] = await Promise.all([
+            readVideoFileDurationMs(file).catch(() => 0),
+            savedPrefs ? Promise.resolve(null) : detectVideoTypeFromFile(file),
+          ]);
+          const placement = getDefaultPlacementForFile(
+            file,
+            targetTrack.id,
+            durationMs,
+            pendingClipEnds,
+          );
+          const nextSync = createOffsetOnlyVideoSync(placement.offsetMs, {
+            trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs,
+            source:
+              placement.placementSource === 'file-time'
+                ? 'auto-file-time'
+                : 'manual-video-track',
+            confidence: placement.placementConfidence,
+          });
+          applyLocalVideoSelection(file, {
+            sourceKind: 'file_picker',
+            label: file.name,
+            nextVideoType: target?.videoType ?? detected?.videoType,
+            nextOffsetMs: placement.offsetMs,
+            nextSync,
+            videoTrackId: targetTrack.id,
+            videoTrackName: targetTrack.name,
+            placementSource: placement.placementSource,
+            placementConfidence: placement.placementConfidence,
+            promptReview: true,
+          });
+          if (durationMs > 0) {
+            setVideoDurationsByKey((prev) => ({
+              ...prev,
+              [localVideoKey(signature)]: durationMs,
+            }));
+          }
+        }
+        setVideoTargetTrackId(targetTrack.id);
+        setVideoNewTrackName('');
       } catch (error) {
         setVideoControlError(getErrorMessage(error));
       }
     },
-    [applyLocalVideoSelection, sessionId],
+    [
+      applyLocalVideoSelection,
+      effectiveTrackTimeOriginUnixMs,
+      getDefaultPlacementForFile,
+      sessionId,
+      videoNewTrackName,
+      videoTargetTrackId,
+      videoTimelineTracks,
+    ],
   );
 
   const loadWorkspaceVideoIntoPlayer = useCallback(
@@ -2389,6 +3446,10 @@ function ReplayWorkspaceHostPage() {
         nextVideoType?: VideoType;
         nextOffsetMs?: number;
         nextSync?: VideoSyncBinding;
+        videoTrackId?: string;
+        videoTrackName?: string;
+        placementSource?: VideoPlacementSource;
+        placementConfidence?: VideoPlacementConfidence;
         promptReview?: boolean;
       },
     ) => {
@@ -2407,12 +3468,39 @@ function ReplayWorkspaceHostPage() {
         : await detectVideoTypeFromFile(file);
       const nextVideoType =
         options?.nextVideoType ?? savedPrefs?.videoType ?? detected?.videoType ?? videoDraftType;
-      const nextOffsetMs =
-        options?.nextOffsetMs ?? savedPrefs?.offsetMs ?? getDefaultOffsetForFile(file);
+      const targetTrack =
+        options?.videoTrackId && options.videoTrackName
+          ? { id: options.videoTrackId, name: options.videoTrackName }
+          : resolveVideoTrackTarget({
+              selectedTrackId: videoTargetTrackId,
+              newTrackName: videoNewTrackName,
+              existingTracks: videoTimelineTracks,
+              sessionId,
+            });
+      const durationMs = await readVideoFileDurationMs(file).catch(() => 0);
+      const placement =
+        options?.nextOffsetMs != null
+          ? {
+              offsetMs: options.nextOffsetMs,
+              placementSource: options.placementSource ?? savedPrefs?.placementSource ?? 'manual',
+              placementConfidence:
+                options.placementConfidence ?? savedPrefs?.placementConfidence ?? 'low',
+            }
+          : getDefaultPlacementForFile(file, targetTrack.id, durationMs);
+      const nextOffsetMs = placement.offsetMs;
       const nextSync = normalizeVideoSyncBinding(
         nextOffsetMs,
-        options?.nextSync ?? savedPrefs?.sync ?? getDefaultSyncForFile(file),
-        { trackTimeOriginUnixMs: session?.trackTimeOriginUnixMs },
+        options?.nextSync ??
+          savedPrefs?.sync ??
+          createOffsetOnlyVideoSync(nextOffsetMs, {
+            trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs,
+            source:
+              placement.placementSource === 'file-time'
+                ? 'auto-file-time'
+                : 'manual-video-track',
+            confidence: placement.placementConfidence,
+          }),
+        { trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs },
       );
 
       applyLocalVideoSelection(file, {
@@ -2422,38 +3510,58 @@ function ReplayWorkspaceHostPage() {
         nextVideoType,
         nextOffsetMs: nextSync.offsetMs,
         nextSync,
+        videoTrackId: targetTrack.id,
+        videoTrackName: targetTrack.name,
+        placementSource: placement.placementSource,
+        placementConfidence: placement.placementConfidence,
         promptReview: options?.promptReview,
       });
+      if (durationMs > 0) {
+        setVideoDurationsByKey((prev) => ({
+          ...prev,
+          [localVideoKey(signature)]: durationMs,
+        }));
+      }
       await saveWorkspaceVideoBinding({
         relativePath,
         fileName: file.name,
         label: options?.label ?? file.name,
         videoType: nextVideoType,
+        videoTrackId: targetTrack.id,
+        videoTrackName: targetTrack.name,
         offsetMs: nextSync.offsetMs,
         sync: nextSync,
+        placementSource: placement.placementSource,
+        placementConfidence: placement.placementConfidence,
       });
+      setVideoTargetTrackId(targetTrack.id);
+      setVideoNewTrackName('');
     },
     [
       applyLocalVideoSelection,
       currentWorkspace,
-      getDefaultOffsetForFile,
-      getDefaultSyncForFile,
+      effectiveTrackTimeOriginUnixMs,
+      getDefaultPlacementForFile,
       saveWorkspaceVideoBinding,
-      session?.trackTimeOriginUnixMs,
       sessionId,
       videoDraftType,
+      videoNewTrackName,
+      videoTargetTrackId,
+      videoTimelineTracks,
     ],
   );
 
   const handleSelectWorkspaceVideo = useCallback(
-    async (video: WorkspaceVideoFileSummary) => {
+    async (video: WorkspaceVideoFileSummary, target?: ManagedVideoTrack) => {
       try {
         setVideoControlError(null);
         await loadWorkspaceVideoIntoPlayer(video.relativePath, {
           label: video.name,
+          nextVideoType: target?.videoType,
+          videoTrackId: target?.id,
+          videoTrackName: target?.label,
           promptReview: true,
         });
-        setIsVideoDialogOpen(false);
       } catch (error) {
         setVideoControlError(getErrorMessage(error));
       }
@@ -2464,21 +3572,57 @@ function ReplayWorkspaceHostPage() {
   useEffect(() => {
     if (!sessionId || hasAppliedPreboundVideoRef.current) return;
 
-    const preboundVideo = replayNavigationState?.preboundVideo;
-    if (!preboundVideo && !currentWorkspace) {
+    const preboundVideos =
+      replayNavigationState?.preboundVideos ??
+      (replayNavigationState?.preboundVideo ? [replayNavigationState.preboundVideo] : []);
+    const workspacePreboundVideos = preboundVideos.filter(
+      (video) => video.kind === 'workspace_video',
+    );
+    const localPreboundVideos = preboundVideos.filter(
+      (video) => video.kind === 'local_file' && video.file,
+    );
+
+    if (preboundVideos.length === 0 && !currentWorkspace) {
       hasAppliedPreboundVideoRef.current = true;
       return;
     }
 
-    if (preboundVideo?.kind === 'workspace_video' && currentWorkspace) {
+    if (workspacePreboundVideos.length > 0 && !currentWorkspace) {
+      return;
+    }
+
+    if (preboundVideos.length > 0) {
       hasAppliedPreboundVideoRef.current = true;
-      void loadWorkspaceVideoIntoPlayer(preboundVideo.relativePath ?? '', {
-        label: preboundVideo.label ?? preboundVideo.fileName,
-        nextVideoType: preboundVideo.videoType,
-        nextOffsetMs: preboundVideo.offsetMs,
-        nextSync: preboundVideo.sync,
-        promptReview: preboundVideo.promptSync,
-      })
+      void Promise.all([
+        ...workspacePreboundVideos.map((video) =>
+          loadWorkspaceVideoIntoPlayer(video.relativePath ?? '', {
+            label: video.label ?? video.fileName,
+            nextVideoType: video.videoType,
+            nextOffsetMs: video.offsetMs,
+            nextSync: video.sync,
+            videoTrackId: video.videoTrackId,
+            videoTrackName: video.videoTrackName,
+            placementSource: video.placementSource,
+            placementConfidence: video.placementConfidence,
+            promptReview: video.promptSync,
+          }),
+        ),
+        ...localPreboundVideos.map((video) => {
+          applyLocalVideoSelection(video.file!, {
+            sourceKind: 'file_picker',
+            label: video.label ?? video.fileName,
+            nextVideoType: video.videoType,
+            nextOffsetMs: video.offsetMs,
+            nextSync: video.sync,
+            videoTrackId: video.videoTrackId,
+            videoTrackName: video.videoTrackName,
+            placementSource: video.placementSource,
+            placementConfidence: video.placementConfidence,
+            promptReview: video.promptSync,
+          });
+          return Promise.resolve();
+        }),
+      ])
         .catch((error) => {
           setVideoControlError(getErrorMessage(error));
         })
@@ -2491,47 +3635,41 @@ function ReplayWorkspaceHostPage() {
       return;
     }
 
-    if (preboundVideo?.kind === 'local_file' && preboundVideo.file) {
-      hasAppliedPreboundVideoRef.current = true;
-      applyLocalVideoSelection(preboundVideo.file, {
-        sourceKind: 'file_picker',
-        label: preboundVideo.label ?? preboundVideo.fileName,
-        nextVideoType: preboundVideo.videoType,
-        nextOffsetMs: preboundVideo.offsetMs,
-        nextSync: preboundVideo.sync,
-        promptReview: preboundVideo.promptSync,
-      });
-      navigate(`${location.pathname}${location.search}`, {
-        replace: true,
-        state: null,
-      });
-      return;
-    }
-
-    const workspaceBinding = sessionBindings?.videos[0];
+    const workspaceBindings =
+      sessionBindings?.videos.filter(
+        (binding) =>
+          binding.storageMode === 'workspace_relative_ref' &&
+          Boolean(binding.path),
+      ) ?? [];
     if (
       currentWorkspace &&
-      workspaceBinding &&
-      workspaceBinding.storageMode === 'workspace_relative_ref' &&
-      workspaceBinding.path
+      workspaceBindings.length > 0
     ) {
       hasAppliedPreboundVideoRef.current = true;
-      void loadWorkspaceVideoIntoPlayer(
-        getWorkspaceRelativeBindingPath(workspaceBinding.path),
-        {
-          label: workspaceBinding.label ?? workspaceBinding.fileName,
-          nextVideoType: workspaceBinding.videoType,
-          nextOffsetMs: workspaceBinding.offsetMs,
-          nextSync: workspaceBinding.sync,
-          promptReview: false,
-        },
+      void Promise.all(
+        workspaceBindings.map((binding) =>
+          loadWorkspaceVideoIntoPlayer(
+            getWorkspaceRelativeBindingPath(binding.path),
+            {
+              label: binding.label ?? binding.fileName,
+              nextVideoType: binding.videoType,
+              nextOffsetMs: binding.offsetMs,
+              nextSync: binding.sync,
+              videoTrackId: binding.videoTrackId,
+              videoTrackName: binding.videoTrackName,
+              placementSource: binding.placementSource,
+              placementConfidence: binding.placementConfidence,
+              promptReview: false,
+            },
+          ),
+        ),
       ).catch((error) => {
         setVideoControlError(getErrorMessage(error));
       });
       return;
     }
 
-    if (!preboundVideo && (!currentWorkspace || sessionBindingsLoaded)) {
+    if (preboundVideos.length === 0 && (!currentWorkspace || sessionBindingsLoaded)) {
       hasAppliedPreboundVideoRef.current = true;
     }
   }, [
@@ -2542,53 +3680,16 @@ function ReplayWorkspaceHostPage() {
     location.search,
     navigate,
     replayNavigationState?.preboundVideo,
+    replayNavigationState?.preboundVideos,
     sessionBindings,
     sessionBindingsLoaded,
     sessionId,
   ]);
 
-  const handleChooseFile = useCallback(() => {
+  const handleChooseFile = useCallback((trackId?: string) => {
+    setVideoFilePickerTrackId(trackId ?? expandedVideoTrackId);
     fileInputRef.current?.click();
-  }, []);
-
-  const handleSensorTelemetryFiles = useCallback(
-    async (files: FileList | null) => {
-      if (!files || files.length === 0 || !sessionId) return;
-      const selectedFiles = Array.from(files);
-      setVideoControlError(null);
-      setSensorImportMessage(null);
-
-      try {
-        const parsed = await Promise.all(
-          selectedFiles.map((file) =>
-            currentWorkspace
-              ? importLocalWorkspaceTelemetryFile(currentWorkspace.id, sessionId, file)
-              : parseLocalTelemetryFile(file, { sessionId }),
-          ),
-        );
-        const nextDatasets = parsed.map((item) => item.dataset);
-        setTelemetryDatasets((prev) => {
-          const nextIds = new Set(nextDatasets.map((dataset) => dataset.id));
-          return [
-            ...prev.filter((dataset) => !nextIds.has(dataset.id)),
-            ...nextDatasets,
-          ];
-        });
-        const channelCount = nextDatasets.reduce(
-          (sum, dataset) => sum + dataset.channels.length,
-          0,
-        );
-        setSensorImportMessage(
-          `Imported ${nextDatasets.length} sensor source${
-            nextDatasets.length === 1 ? '' : 's'
-          } with ${channelCount} channel${channelCount === 1 ? '' : 's'}.`,
-        );
-      } catch (error) {
-        setVideoControlError(getErrorMessage(error));
-      }
-    },
-    [currentWorkspace, sessionId],
-  );
+  }, [expandedVideoTrackId]);
 
   const handleOpenCompanionWindow = useCallback(() => {
     if (!sessionId) return;
@@ -2625,36 +3726,34 @@ function ReplayWorkspaceHostPage() {
     sessionId,
   ]);
 
-  const handleRemoveVideo = useCallback(async () => {
-    if (!sessionId || !activeVideo) return;
+  const handleRemoveManageClip = useCallback(async () => {
+    const target = manageClipDetailVideo;
+    if (!sessionId || !target) return;
 
     setVideoControlError(null);
 
-    if (activeVideo.origin === 'local') {
-      if (localVideo?.sourceKind === 'workspace' && localVideo.workspaceRelativePath) {
+    if (target.origin === 'local') {
+      const row = getLocalVideoRow(target);
+      if (row?.sourceKind === 'workspace' && row.workspaceRelativePath) {
         try {
-          await removeWorkspaceVideoBinding(localVideo.workspaceRelativePath);
+          await removeWorkspaceVideoBinding(row.workspaceRelativePath);
         } catch (error) {
           setVideoControlError(getErrorMessage(error));
           return;
         }
       }
-      clearLocalVideo();
+      removeLocalClipByKey(target.key);
+      setManageClipDetailKey(null);
       setVideoNeedsReview(false);
       return;
     }
 
     setVideoBusy(true);
     try {
-      await videoApi.remove(sessionId, activeVideo.id);
-      setSessionVideos((prev) => {
-        const next = activeVideo.id
-          ? prev.filter((video) => video.id !== activeVideo.id)
-          : prev.slice(1);
-        setActiveRemoteVideoId(next[0]?.id ?? null);
-        setActiveVideoKey(next[0] ? remoteVideoKey(next[0]) : null);
-        return next;
-      });
+      await videoApi.remove(sessionId, target.id);
+      setSessionVideos((prev) =>
+        target.id ? prev.filter((video) => video.id !== target.id) : prev.slice(1),
+      );
       setVideoDraftUrl('');
       setVideoStageError(null);
       setVideoClockMs(0);
@@ -2663,26 +3762,78 @@ function ReplayWorkspaceHostPage() {
       setSyncSessionTimeMs(0);
       setSyncVideoTimeMs(0);
       setVideoNeedsReview(false);
+      setManageClipDetailKey(null);
     } catch (error) {
       setVideoControlError(getErrorMessage(error));
     } finally {
       setVideoBusy(false);
     }
-  }, [activeVideo, clearLocalVideo, localVideo, removeWorkspaceVideoBinding, sessionId]);
+  }, [
+    getLocalVideoRow,
+    manageClipDetailVideo,
+    removeLocalClipByKey,
+    removeWorkspaceVideoBinding,
+    sessionId,
+  ]);
 
   const handleOpenSync = useCallback(() => {
-    if (!activeVideo) return;
+    const key = primaryStageVideo?.key ?? videoSources[0]?.key ?? null;
+    if (!key) return;
+    setSyncDialogClipKey(key);
     resumeAfterSyncRef.current = isPlaying;
     setIsPlaying(false);
     setSyncSessionTimeMs(currentTime);
-    setSyncVideoTimeMs(videoClockMs);
+    setSyncVideoTimeMs(videoClocksByKey[key] ?? videoClockMs);
     setSyncDialogOpen(true);
     setVideoNeedsReview(false);
-  }, [activeVideo, currentTime, isPlaying, videoClockMs]);
+  }, [
+    currentTime,
+    isPlaying,
+    primaryStageVideo?.key,
+    videoClockMs,
+    videoClocksByKey,
+    videoSources,
+  ]);
+
+  const handleResetManageClipOffset = useCallback(() => {
+    const v = manageClipDetailVideo;
+    if (!v) return;
+    const row = getLocalVideoRow(v);
+    const defaultSync =
+      v.origin === 'local' && row
+        ? getDefaultSyncForFile(row.file, videoDurationsByKey[v.key] ?? 0)
+        : createOffsetOnlyVideoSync(0, {
+            trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs,
+            source: 'manual-video-track',
+            confidence: 'low',
+          });
+    void applyVideoSyncForSource(v, defaultSync);
+  }, [
+    applyVideoSyncForSource,
+    getDefaultSyncForFile,
+    getLocalVideoRow,
+    manageClipDetailVideo,
+    effectiveTrackTimeOriginUnixMs,
+    videoDurationsByKey,
+  ]);
+
+  const handleOpenSyncForManageClip = useCallback(() => {
+    const v = manageClipDetailVideo;
+    if (!v) return;
+    setManageClipDetailKey(null);
+    setSyncDialogClipKey(v.key);
+    resumeAfterSyncRef.current = isPlaying;
+    setIsPlaying(false);
+    setSyncSessionTimeMs(currentTime);
+    setSyncVideoTimeMs(videoClocksByKey[v.key] ?? 0);
+    setSyncDialogOpen(true);
+    setVideoNeedsReview(false);
+  }, [currentTime, isPlaying, manageClipDetailVideo, videoClocksByKey]);
 
   const handleCloseSync = useCallback(() => {
     setCurrentTime(syncSessionTimeMs);
     setSyncDialogOpen(false);
+    setSyncDialogClipKey(null);
     if (
       resumeAfterSyncRef.current &&
       totalDuration > 0 &&
@@ -2703,12 +3854,12 @@ function ReplayWorkspaceHostPage() {
         source: 'manual-video-track',
         confidence: 'high',
       },
-      { trackTimeOriginUnixMs: session?.trackTimeOriginUnixMs },
+      { trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs },
     );
     void updateActiveSync(nextSync);
   }, [
     currentTime,
-    session?.trackTimeOriginUnixMs,
+    effectiveTrackTimeOriginUnixMs,
     syncDialogOpen,
     syncSessionTimeMs,
     syncVideoTimeMs,
@@ -2718,7 +3869,7 @@ function ReplayWorkspaceHostPage() {
 
   const handleBindVideoRealTime = useCallback(
     (realUnixMs: number) => {
-      const trackTimeMs = trackTimeFromRealTime(realUnixMs, session?.trackTimeOriginUnixMs);
+      const trackTimeMs = trackTimeFromRealTime(realUnixMs, effectiveTrackTimeOriginUnixMs);
       if (trackTimeMs == null) {
         setVideoControlError('This track does not have a reliable wall-clock origin.');
         return;
@@ -2737,7 +3888,7 @@ function ReplayWorkspaceHostPage() {
           source: 'manual-video-realtime',
           confidence: 'high',
         },
-        { trackTimeOriginUnixMs: session?.trackTimeOriginUnixMs },
+        { trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs },
       );
       setSyncSessionTimeMs(trackTimeMs);
       setCurrentTime(trackTimeMs);
@@ -2745,7 +3896,7 @@ function ReplayWorkspaceHostPage() {
       void updateActiveSync(nextSync);
     },
     [
-      session?.trackTimeOriginUnixMs,
+      effectiveTrackTimeOriginUnixMs,
       syncDialogOpen,
       syncVideoTimeMs,
       totalDuration,
@@ -2755,15 +3906,26 @@ function ReplayWorkspaceHostPage() {
   );
 
   const handleResetOffsetToDefault = useCallback(() => {
-    const defaultSync = localVideo
-      ? getDefaultSyncForFile(localVideo.file)
-      : createOffsetOnlyVideoSync(0, {
-          trackTimeOriginUnixMs: session?.trackTimeOriginUnixMs,
-          source: 'manual-video-track',
-          confidence: 'low',
-        });
+    const v = syncDialogVideo;
+    if (!v) return;
+    const row = getLocalVideoRow(v);
+    const defaultSync =
+      v.origin === 'local' && row
+        ? getDefaultSyncForFile(row.file, videoDurationsByKey[v.key] ?? 0)
+        : createOffsetOnlyVideoSync(0, {
+            trackTimeOriginUnixMs: effectiveTrackTimeOriginUnixMs,
+            source: 'manual-video-track',
+            confidence: 'low',
+          });
     void updateActiveSync(defaultSync);
-  }, [getDefaultSyncForFile, localVideo, session?.trackTimeOriginUnixMs, updateActiveSync]);
+  }, [
+    getDefaultSyncForFile,
+    getLocalVideoRow,
+    effectiveTrackTimeOriginUnixMs,
+    syncDialogVideo,
+    updateActiveSync,
+    videoDurationsByKey,
+  ]);
 
   const handleSyncSessionSeek = useCallback(
     (timeMs: number) => {
@@ -2776,10 +3938,14 @@ function ReplayWorkspaceHostPage() {
 
   const handleSyncVideoSeek = useCallback(
     (timeMs: number) => {
-      const nextTimeMs = Math.max(0, Math.min(timeMs, videoDurationMs || timeMs));
+      const cap =
+        syncDialogOpen && syncDialogVideo
+          ? videoDurationsByKey[syncDialogVideo.key] ?? videoDurationMs
+          : videoDurationMs;
+      const nextTimeMs = Math.max(0, Math.min(timeMs, cap || timeMs));
       setSyncVideoTimeMs(nextTimeMs);
     },
-    [videoDurationMs],
+    [syncDialogOpen, syncDialogVideo, videoDurationsByKey, videoDurationMs],
   );
 
   const windDir = manualWind?.dir ?? (currentPoint ? getWindDir(currentPoint) : undefined);
@@ -2846,7 +4012,7 @@ function ReplayWorkspaceHostPage() {
         windDir={manualWind?.dir}
         headingColor={themeId === 'cyber' ? '#22c55e' : undefined}
         telemetryDatasets={telemetryDatasets}
-        telemetryWindow={workspaceWindowEffective}
+        telemetryWindow={telemetryLoadWindow}
         telemetryTimeOriginMs={workspaceWindowEffective.startMs}
       />
     ),
@@ -2856,8 +4022,9 @@ function ReplayWorkspaceHostPage() {
       handleChartSeek,
       handleRangeSelection,
       manualWind?.dir,
-      telemetryDatasets,
       telemetryWorkspace,
+      telemetryDatasets,
+      telemetryLoadWindow,
       themeId,
       workspaceDurationMs,
       workspaceWindowEffective,
@@ -2877,11 +4044,12 @@ function ReplayWorkspaceHostPage() {
       }
 
       const durationMs = videoDurationsByKey[video.key] ?? 0;
-      const rawVideoTimeMs = syncDialogOpen && video.key === activeVideo?.key
-        ? syncVideoTimeMs
-        : currentTime - video.offsetMs;
+      const syncOverlay =
+        syncDialogOpen && syncDialogClipKey != null && video.key === syncDialogClipKey;
+      const mirrorGlobalClock = syncOverlay || video.key === primaryStageVideo?.key;
+      const rawVideoTimeMs = syncOverlay ? syncVideoTimeMs : currentTime - video.offsetMs;
       const videoHasStarted = rawVideoTimeMs >= 0;
-      const targetVideoTimeMs = syncDialogOpen && video.key === activeVideo?.key
+      const targetVideoTimeMs = syncOverlay
         ? Math.max(0, Math.min(syncVideoTimeMs, durationMs || Number.MAX_SAFE_INTEGER))
         : Math.max(
             0,
@@ -2890,7 +4058,7 @@ function ReplayWorkspaceHostPage() {
               durationMs || Number.MAX_SAFE_INTEGER,
             ),
           );
-      const completionNotice = !(syncDialogOpen && video.key === activeVideo?.key)
+      const completionNotice = !syncOverlay
         ? !videoHasStarted
           ? `Video not started yet. Starts at session ${formatTimestamp(Math.max(0, video.offsetMs))}.`
           : currentTime < totalDuration && durationMs > 0 && rawVideoTimeMs >= durationMs
@@ -2910,7 +4078,7 @@ function ReplayWorkspaceHostPage() {
           sourceUrl={video.url}
           mediaLabel={video.label}
           targetTimeMs={targetVideoTimeMs}
-          isPlaying={syncDialogOpen && video.key === activeVideo?.key ? false : isPlaying && videoHasStarted}
+          isPlaying={syncOverlay ? false : isPlaying && videoHasStarted}
           playbackSpeed={playbackSpeed}
           crossOrigin={video.crossOrigin}
           className={className}
@@ -2945,7 +4113,7 @@ function ReplayWorkspaceHostPage() {
               if (!shouldStoreVideoClock(prev[video.key], timeMs)) return prev;
               return { ...prev, [video.key]: timeMs };
             });
-            if (video.key === activeVideo?.key) {
+            if (mirrorGlobalClock) {
               setVideoClockMs((prev) =>
                 shouldStoreVideoClock(prev, timeMs) ? timeMs : prev,
               );
@@ -2955,7 +4123,7 @@ function ReplayWorkspaceHostPage() {
             setVideoDurationsByKey((prev) =>
               prev[video.key] === durationMs ? prev : { ...prev, [video.key]: durationMs },
             );
-            if (video.key === activeVideo?.key) {
+            if (mirrorGlobalClock) {
               setVideoDurationMs((prev) => (prev === durationMs ? prev : durationMs));
             }
           }}
@@ -2965,16 +4133,17 @@ function ReplayWorkspaceHostPage() {
       );
     },
     [
-      activeVideo,
       currentPoint,
       currentTime,
       isPlaying,
       nearestEvent,
       playbackSpeed,
+      primaryStageVideo?.key,
       selectedEvent,
       selectedMark,
       selection.range,
       session?.name,
+      syncDialogClipKey,
       syncDialogOpen,
       syncVideoTimeMs,
       totalDuration,
@@ -2989,10 +4158,16 @@ function ReplayWorkspaceHostPage() {
       if (content === 'map') return renderMapCanvas(viewportKey);
       if (content === 'telemetry') return renderTelemetryStage();
       const videoKey = videoKeyFromStageContent(content);
-      const video = videoSources.find((source) => source.key === videoKey) ?? null;
+      const video = videoKey ? resolveVideoForTimelineTrack(videoKey) : null;
       return renderVideoStageFor(video, stageLayoutMode === 'split' ? 'split' : 'overlay', 'h-full');
     },
-    [renderMapCanvas, renderTelemetryStage, renderVideoStageFor, stageLayoutMode, videoSources],
+    [
+      renderMapCanvas,
+      renderTelemetryStage,
+      renderVideoStageFor,
+      resolveVideoForTimelineTrack,
+      stageLayoutMode,
+    ],
   );
 
   if (loading) {
@@ -3101,13 +4276,10 @@ function ReplayWorkspaceHostPage() {
     ? activeVideo.origin === 'local'
       ? `${
           localVideo?.sourceKind === 'workspace' ? 'Workspace video' : 'Local file'
-        } · ${activeVideo.videoType === '360' ? '360' : 'Flat'}`
-      : `Linked URL · ${activeVideo.videoType === '360' ? '360' : 'Flat'}`
+        } · ${activeVideo.videoTrackName} · ${activeVideo.videoType === '360' ? '360' : 'Flat'}`
+      : `Linked URL · ${activeVideo.videoTrackName} · ${activeVideo.videoType === '360' ? '360' : 'Flat'}`
     : 'No video attached';
   const videoFeedback = videoControlError ?? videoStageError;
-  const activeVideoDefaultOffsetMs = localVideo
-    ? getDefaultOffsetForFile(localVideo.file)
-    : 0;
   const companionStatusMeta = (() => {
     switch (companionState) {
       case 'opening':
@@ -3144,7 +4316,7 @@ function ReplayWorkspaceHostPage() {
   const showTopBarVideoOffset = Boolean(activeVideo) && topBarWidth >= 1360;
   const showTopBarVideoOrigin = topBarWidth >= 1320;
   const videoStatusLabel = activeVideo
-    ? `${videoSources.length} video${videoSources.length > 1 ? 's' : ''}`
+    ? `${videoTimelineTracks.length} track${videoTimelineTracks.length > 1 ? 's' : ''} / ${videoSources.length} clip${videoSources.length > 1 ? 's' : ''}`
     : 'No video';
   const videoStatusTitle = activeVideo
     ? `${activeVideo.label ?? 'Untitled video'} · ${activeVideoSummary} · Offset ${(
@@ -3155,6 +4327,12 @@ function ReplayWorkspaceHostPage() {
     typeof BroadcastChannel === 'undefined'
       ? 'Browser unsupported'
       : null;
+  const splitGridClass =
+    splitDirection === 'top-bottom'
+      ? 'relative grid min-h-[420px] flex-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-px bg-black/20 lg:min-h-0'
+      : 'relative grid min-h-[420px] flex-1 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-px bg-black/20 lg:min-h-0';
+  const splitPrimaryLabel = splitDirection === 'top-bottom' ? 'Top' : 'Left';
+  const splitSecondaryLabel = splitDirection === 'top-bottom' ? 'Bottom' : 'Right';
 
   return (
     <div
@@ -3182,7 +4360,11 @@ function ReplayWorkspaceHostPage() {
               >
                 <ChevronLeft className="h-5 w-5" />
               </Link>
-              <div className="min-w-[130px] max-w-[205px] shrink">
+              <div
+                className={`min-w-[130px] max-w-[205px] shrink border px-2 py-1.5 text-left ${s.divider} ${
+                  isRound ? 'rounded-xl' : 'rounded-sm'
+                }`}
+              >
                 <p className={sectionLabelClass}>Metadata</p>
                 <h1 className={`truncate text-base font-semibold md:text-lg ${s.textPrimary}`}>
                   {session.name}
@@ -3269,10 +4451,42 @@ function ReplayWorkspaceHostPage() {
                   </button>
                 ))}
               </div>
+              {stageLayoutMode === 'split' ? (
+                <div className={`flex shrink-0 items-center rounded-lg border ${s.divider} p-0.5`}>
+                  <button
+                    type="button"
+                    onClick={() => setSplitDirection('left-right')}
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${
+                      splitDirection === 'left-right' ? s.buttonPrimary : s.buttonSecondary
+                    }`}
+                    title="Left / right split"
+                    aria-label="Left / right split"
+                  >
+                    <Columns2 className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSplitDirection('top-bottom')}
+                    className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition ${
+                      splitDirection === 'top-bottom' ? s.buttonPrimary : s.buttonSecondary
+                    }`}
+                    title="Top / bottom split"
+                    aria-label="Top / bottom split"
+                  >
+                    <Rows2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : null}
 
               <button
                 type="button"
-                onClick={() => setIsVideoDialogOpen(true)}
+                onClick={() => {
+                  const targetTrackId =
+                    activeVideo?.videoTrackId ?? managedVideoTracks[0]?.id ?? null;
+                  setExpandedVideoTrackId(targetTrackId);
+                  if (targetTrackId) setVideoTargetTrackId(targetTrackId);
+                  setIsVideoDialogOpen(true);
+                }}
                 className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full border ${s.divider} px-2.5 py-1.5 text-sm ${s.textPrimary} transition-colors hover:bg-current/5`}
               >
                 {activeVideo ? (
@@ -3296,20 +4510,6 @@ function ReplayWorkspaceHostPage() {
               </button>
               <button
                 type="button"
-                onClick={handleOpenCompanionWindow}
-                disabled={Boolean(companionDisabledReason)}
-                className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1.5 text-sm ${
-                  companionDisabledReason
-                    ? `${s.buttonSecondary} cursor-not-allowed opacity-40`
-                    : s.buttonSecondary
-                }`}
-                title={companionDisabledReason ?? 'Open Screen 2 surface'}
-              >
-                <Film className="h-4 w-4" />
-                <span>Screen 2</span>
-              </button>
-              <button
-                type="button"
                 onClick={() => sensorInputRef.current?.click()}
                 className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full border ${s.divider} px-2.5 py-1.5 text-sm ${s.textPrimary} transition-colors hover:bg-current/5`}
                 title="Import sensor telemetry"
@@ -3322,6 +4522,34 @@ function ReplayWorkspaceHostPage() {
                   </span>
                 ) : null}
               </button>
+              <button
+                type="button"
+                onClick={handleOpenCompanionWindow}
+                disabled={Boolean(companionDisabledReason)}
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1.5 text-sm ${
+                  companionDisabledReason
+                    ? `${s.buttonSecondary} cursor-not-allowed opacity-40`
+                    : s.buttonSecondary
+                }`}
+                title={companionDisabledReason ?? 'Open Screen 2 surface'}
+              >
+                <Film className="h-4 w-4" />
+                <span>Screen 2</span>
+              </button>
+              <input
+                ref={sensorInputRef}
+                type="file"
+                accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain"
+                multiple
+                className="hidden"
+                onChange={(event) => {
+                  const files = Array.from(event.target.files ?? []);
+                  if (files.length > 0) {
+                    void handleImportSensorFiles(files);
+                  }
+                  event.currentTarget.value = '';
+                }}
+              />
 
               <div className="ml-auto flex min-w-0 shrink items-center gap-2">
                 {showTopBarSessionTabs ? (
@@ -3340,6 +4568,12 @@ function ReplayWorkspaceHostPage() {
                 </Link>
               </div>
             </div>
+
+                {sensorImportMessage ? (
+                  <div className={`border-t ${s.divider} px-4 py-2 text-xs ${s.textSecondary}`}>
+                    {sensorImportMessage}
+                  </div>
+                ) : null}
 
                 {activeVideo && videoNeedsReview ? (
                   <div className={`rounded-2xl border ${s.divider} px-4 py-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between`}>
@@ -3374,23 +4608,24 @@ function ReplayWorkspaceHostPage() {
                   ref={fileInputRef}
                   type="file"
                   accept="video/*"
-                  className="hidden"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) {
-                      void handleSelectLocalVideo(file);
-                    }
-                    event.currentTarget.value = '';
-                  }}
-                />
-                <input
-                  ref={sensorInputRef}
-                  type="file"
-                  accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain"
                   multiple
                   className="hidden"
                   onChange={(event) => {
-                    void handleSensorTelemetryFiles(event.currentTarget.files);
+                    const files = Array.from(event.target.files ?? []);
+                    const targetTrackId = videoFilePickerTrackId ?? expandedVideoTrackId;
+                    const targetTrack = targetTrackId
+                      ? managedVideoTracks.find((track) => track.id === targetTrackId)
+                      : null;
+                    if (files.length > 0 && targetTrack) {
+                      void handleSelectLocalVideos(files, {
+                        id: targetTrack.id,
+                        name: targetTrack.label,
+                        videoType: targetTrack.videoType,
+                      });
+                    } else if (files.length > 0) {
+                      setVideoControlError('Create or expand a video track before adding clips.');
+                    }
+                    setVideoFilePickerTrackId(null);
                     event.currentTarget.value = '';
                   }}
                 />
@@ -3403,11 +4638,11 @@ function ReplayWorkspaceHostPage() {
         >
           {stageLayoutMode === 'split' ? (
             <div
-              className="relative grid min-h-[420px] flex-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-px bg-black/20 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]"
+              className={splitGridClass}
             >
               <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-black">
                 <StageContentSelect
-                  label="Left"
+                  label={splitPrimaryLabel}
                   value={leftStageContent}
                   variant="overlay"
                   options={stageContentOptions}
@@ -3420,7 +4655,7 @@ function ReplayWorkspaceHostPage() {
               </div>
               <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-black">
                 <StageContentSelect
-                  label="Right"
+                  label={splitSecondaryLabel}
                   value={rightStageContent}
                   variant="overlay"
                   options={stageContentOptions}
@@ -3455,22 +4690,21 @@ function ReplayWorkspaceHostPage() {
           totalDuration={totalDuration}
           workspaceWindow={workspaceWindow}
           onChangeWorkspace={setWorkspaceWindow}
-          videoOffsetMs={activeVideo?.offsetMs ?? 0}
+          videoOffsetMs={primaryStageVideo?.offsetMs ?? 0}
           videoDurationMs={videoDurationMs}
-          videoTracks={videoSources.map((video, index) => ({
-            id: video.key,
-            label: video.label ?? `Video ${index + 1}`,
-            offsetMs: video.offsetMs,
-            durationMs: videoDurationsByKey[video.key] ?? 0,
-            active: activeVideo?.key === video.key,
+          videoTracks={videoTimelineTracks.map((track) => ({
+            id: track.id,
+            label: track.label,
+            clips: track.clips.map((clip) => ({
+              id: clip.source.key,
+              label: clip.source.label ?? clip.source.url,
+              offsetMs: clip.source.offsetMs,
+              durationMs: clip.durationMs,
+            })),
           }))}
-          draftVideoOffsetMs={draftOffsetMs}
-          onDraftVideoOffset={setDraftOffsetMs}
-          onCommitVideoOffset={handleCommitVideoOffsetFromTimeline}
-          onSelectVideoTrack={(videoKey) => {
-            const selected = videoSources.find((video) => video.key === videoKey) ?? null;
-            selectActiveVideo(selected);
-          }}
+          draftVideoClip={timelineDraftClip}
+          onDraftVideoClipOffset={setTimelineDraftClip}
+          onCommitVideoClipOffset={handleCommitVideoClipOffsetFromTimeline}
           showVideoTrack={videoSources.length > 0}
           isPlaying={isPlaying}
           playbackSpeed={playbackSpeed}
@@ -3483,9 +4717,9 @@ function ReplayWorkspaceHostPage() {
           onSpeedChange={setPlaybackSpeed}
           onSkip={handleSkip}
           onOpenSync={handleOpenSync}
-          syncDisabled={!activeVideo}
+          syncDisabled={!primaryStageVideo}
           syncLabel={
-            !activeVideo
+            !primaryStageVideo
               ? 'No video'
               : videoStageReady
                 ? 'Sync video'
@@ -3561,6 +4795,14 @@ function ReplayWorkspaceHostPage() {
                 const isActive =
                   selection.eventId === event.id ||
                   Math.abs(event.timestamp - currentTime) < EVENT_ACTIVE_WINDOW_MS;
+                const eventMetricSummary = [
+                  event.metrics?.headingChange != null
+                    ? `HDG ${Math.round(event.metrics.headingChange)} deg`
+                    : null,
+                  event.metrics?.speedLoss != null
+                    ? `Loss ${event.metrics.speedLoss.toFixed(1)} kts`
+                    : null,
+                ].filter((value): value is string => Boolean(value));
                 return (
                   <div
                     key={event.id}
@@ -3579,17 +4821,9 @@ function ReplayWorkspaceHostPage() {
                     >
                       {event.note}
                     </div>
-                    {event.metrics?.speedLoss != null || event.metrics?.headingChange != null ? (
+                    {eventMetricSummary.length > 0 ? (
                       <div className={`mt-1 text-xs ${s.textSecondary}`}>
-                        {event.metrics?.headingChange != null
-                          ? `HDG ${Math.round(event.metrics.headingChange)} deg`
-                          : ''}
-                        {event.metrics?.headingChange != null && event.metrics?.speedLoss != null
-                          ? ' / '
-                          : ''}
-                        {event.metrics?.speedLoss != null
-                          ? `Loss ${event.metrics.speedLoss.toFixed(1)} kts`
-                          : ''}
+                        {eventMetricSummary.join(' / ')}
                       </div>
                     ) : null}
                   </div>
@@ -3606,10 +4840,24 @@ function ReplayWorkspaceHostPage() {
                   }`}
                 >
                   <div className={`mb-1 text-xs ${s.textSecondary}`}>{mark.type}</div>
-                  <div
-                    className={`font-medium transition-transform group-hover:translate-x-1 ${s.textPrimary}`}
-                  >
-                    {mark.name ?? mark.type}
+                  <div className="flex items-start justify-between gap-3">
+                    <div
+                      className={`min-w-0 flex-1 font-medium transition-transform group-hover:translate-x-1 ${s.textPrimary}`}
+                    >
+                      {mark.name ?? mark.type}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleDeleteMark(mark);
+                      }}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-red-500 opacity-70 transition-colors hover:bg-red-500/10 hover:opacity-100"
+                      title="Delete mark"
+                      aria-label={`Delete ${mark.name ?? mark.type}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                   <div className={`mt-1 text-xs ${s.textSecondary}`}>
                     {mark.lat.toFixed(4)}, {mark.lon.toFixed(4)}
@@ -3799,12 +5047,6 @@ function ReplayWorkspaceHostPage() {
                 ) : null}
               </div>
 
-              {sensorImportMessage ? (
-                <div className={`mb-3 rounded-2xl border ${s.divider} px-4 py-3 text-xs ${s.textSecondary}`}>
-                  {sensorImportMessage}
-                </div>
-              ) : null}
-
               <WorkspaceTelemetryStage
                 telemetry={telemetryWorkspace}
                 totalDurationMs={workspaceDurationMs}
@@ -3818,7 +5060,7 @@ function ReplayWorkspaceHostPage() {
                 windDir={manualWind?.dir}
                 headingColor={themeId === 'cyber' ? '#22c55e' : undefined}
                 telemetryDatasets={telemetryDatasets}
-                telemetryWindow={workspaceWindowEffective}
+                telemetryWindow={telemetryLoadWindow}
                 telemetryTimeOriginMs={workspaceWindowEffective.startMs}
               />
             </div>
@@ -3827,21 +5069,26 @@ function ReplayWorkspaceHostPage() {
           )}
         </aside>
 
-        {activeVideo ? (
+        {syncDialogVideo ? (
           <VideoSyncDialog
             isOpen={syncDialogOpen}
-            offsetMs={activeVideo.offsetMs}
+            sourceUrl={syncDialogVideo.url}
+            videoType={syncDialogVideo.videoType}
+            mediaLabel={syncDialogVideo.label ?? syncDialogVideo.url}
+            crossOrigin={syncDialogVideo.crossOrigin}
+            offsetMs={syncDialogVideo.offsetMs}
             sessionTimeMs={syncDialogOpen ? syncSessionTimeMs : currentTime}
             videoTimeMs={syncDialogOpen ? syncVideoTimeMs : videoClockMs}
             totalDurationMs={totalDuration}
-            videoDurationMs={videoDurationMs}
-            trackTimeOriginUnixMs={session?.trackTimeOriginUnixMs}
-            anchorCount={activeVideo.sync?.anchors.length ?? 0}
+            videoDurationMs={videoDurationsByKey[syncDialogVideo.key] ?? videoDurationMs}
+            trackTimeOriginUnixMs={effectiveTrackTimeOriginUnixMs}
+            anchorCount={syncDialogVideo.sync?.anchors.length ?? 0}
+            sessionJumpOptions={syncSessionJumpOptions}
             onClose={handleCloseSync}
             onAlignCurrentFrame={handleAlignCurrentFrame}
             onBindVideoRealTime={handleBindVideoRealTime}
             onAdjustOffset={(deltaMs) => {
-              void updateActiveOffset(activeVideo.offsetMs + deltaMs);
+              void updateActiveOffset(syncDialogVideo.offsetMs + deltaMs);
             }}
             onResetOffset={handleResetOffsetToDefault}
             onSessionSeek={handleSyncSessionSeek}
@@ -3858,355 +5105,536 @@ function ReplayWorkspaceHostPage() {
                     {activeVideo ? 'Manage Video' : 'Bind Video'}
                   </h3>
                   <p className={`mt-1 text-sm ${s.textSecondary}`}>
-                    Choose a recommended workspace video, bind a local file, or link a URL.
+                    Add clips to a camera track, move clips between tracks, or refine sync.
                   </p>
                 </div>
-                <button onClick={() => setIsVideoDialogOpen(false)} className={`p-1 hover:bg-current/10 rounded-full transition-colors ${s.textSecondary}`}>
+                <button
+                  onClick={() => {
+                    setManageClipDetailKey(null);
+                    setIsVideoDialogOpen(false);
+                  }}
+                  className={`p-1 hover:bg-current/10 rounded-full transition-colors ${s.textSecondary}`}
+                >
                   <X className="h-5 w-5" />
                 </button>
               </div>
 
-              <div className={`rounded-2xl border ${s.divider} p-4 flex flex-col gap-3`}>
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className={`rounded-full border ${s.divider} px-3 py-1 text-xs ${s.textSecondary}`}>
-                    {activeVideoSummary}
-                  </div>
-                  {activeVideo ? (
-                    <div className={`rounded-full border ${s.divider} px-3 py-1 text-xs ${s.textSecondary}`}>
-                      Offset {(activeVideo.offsetMs / 1000).toFixed(1)}s
-                    </div>
-                  ) : null}
-                  {localVideo?.workspaceRelativePath ? (
-                    <div className={`rounded-full border ${s.divider} px-3 py-1 text-xs ${s.textSecondary}`}>
-                      {localVideo.workspaceRelativePath}
-                    </div>
-                  ) : null}
+              <div className="flex flex-wrap items-center gap-3">
+                <div className={`rounded-full border ${s.divider} px-3 py-1 text-xs ${s.textSecondary}`}>
+                  {activeVideoSummary}
                 </div>
-                <div className="flex flex-col gap-2">
-                  <label className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>Video Type</label>
-                  <select
-                    value={videoDraftType}
-                    onChange={(event) => setVideoDraftType(event.target.value as VideoType)}
-                    className={`w-full px-3 py-2 text-sm rounded-lg ${s.input}`}
-                  >
-                    <option value="flat">Flat video</option>
-                    <option value="360">360 video</option>
-                  </select>
+                <div className={`rounded-full border ${s.divider} px-3 py-1 text-xs ${s.textSecondary}`}>
+                  Stage:{' '}
+                  {primaryStageVideo ? primaryStageVideo.label ?? primaryStageVideo.url : '—'}
                 </div>
+                <span className={`text-xs ${s.textSecondary}`}>
+                  Tip: click any clip row to edit that video.
+                </span>
               </div>
 
-              <div className={`flex flex-wrap gap-2 ${s.panel} p-1`}>
-                {(
-                  [
-                    ['recommended', 'Recommended'],
-                    ['workspace', 'Workspace Videos'],
-                    ['local', 'Local File'],
-                    ['url', 'Link URL'],
-                  ] as const
-                ).map(([tabId, label]) => (
-                  <button
-                    key={tabId}
-                    type="button"
-                    onClick={() => setVideoDialogTab(tabId)}
-                    className={`px-4 py-2 text-sm transition-all ${
-                      videoDialogTab === tabId
-                        ? `${s.accentBg} font-medium`
-                        : `${s.textSecondary} hover:opacity-70`
-                    } ${tabId !== 'workspace' && tabId !== 'recommended' ? (isRound ? 'rounded-xl' : 'rounded-sm') : isRound ? 'rounded-xl' : 'rounded-sm'}`}
-                  >
-                    {label}
-                  </button>
-                ))}
+              <div className="flex items-center justify-between gap-3">
+                <p className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
+                  Video Tracks
+                </p>
+                <button
+                  type="button"
+                  onClick={handleAddManagedVideoTrack}
+                  className={`inline-flex items-center gap-2 px-3 py-2 text-xs ${s.buttonSecondary}`}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  New Track
+                </button>
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
-                <div className={`rounded-2xl border ${s.divider} p-4 flex flex-col gap-4 min-h-[320px]`}>
-                  {videoDialogTab === 'recommended' ? (
-                    recommendedWorkspaceVideos.length > 0 ? (
-                      <div className="grid gap-2">
-                        {recommendedWorkspaceVideos.map((video) => (
+              {managedVideoTracks.length === 0 ? (
+                <div className={`rounded-2xl border ${s.divider} p-4 text-sm ${s.textSecondary}`}>
+                  Create a video track first, then add workspace, local, or URL clips into it.
+                </div>
+              ) : (
+                <div className="flex max-h-[68vh] flex-col gap-3 overflow-y-auto pr-1">
+                  {managedVideoTracks.map((track, trackIndex) => {
+                    const isExpanded = expandedVideoTrackId === track.id;
+                    const isActiveTrack = primaryStageVideo?.videoTrackId === track.id;
+                    const trackName = track.label || `Video Track ${trackIndex + 1}`;
+                    return (
+                      <div
+                        key={track.id}
+                        className={`border ${s.divider} ${isActiveTrack ? s.accentBg : ''} ${
+                          isRound ? 'rounded-2xl' : 'rounded-sm'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 p-3">
                           <button
-                            key={video.relativePath}
                             type="button"
-                            onClick={() => void handleSelectWorkspaceVideo(video)}
-                            className={`flex items-center justify-between gap-3 px-3 py-3 text-left transition-all ${
-                              localVideo?.workspaceRelativePath === video.relativePath
-                                ? `${s.accentBg}`
-                                : s.buttonSecondary
-                            } ${isRound ? 'rounded-xl' : 'rounded-sm'}`}
+                            onClick={() => {
+                              setExpandedVideoTrackId((prev) =>
+                                prev === track.id ? null : track.id,
+                              );
+                              setVideoTargetTrackId(track.id);
+                              setVideoDraftType(track.videoType);
+                            }}
+                            className="flex min-w-0 flex-1 items-center gap-3 text-left"
                           >
+                            {isExpanded ? (
+                              <ChevronDown className={`h-4 w-4 shrink-0 ${s.textSecondary}`} />
+                            ) : (
+                              <ChevronRight className={`h-4 w-4 shrink-0 ${s.textSecondary}`} />
+                            )}
                             <div className="min-w-0">
-                              <div className={`truncate text-sm font-medium ${s.textPrimary}`}>
-                                {video.name}
+                              <div className={`truncate text-sm font-semibold ${s.textPrimary}`}>
+                                {trackName}
                               </div>
                               <div className={`text-xs ${s.textSecondary}`}>
-                                {video.relativePath}
+                                {track.videoType === '360' ? '360 video' : 'Flat video'} -{' '}
+                                {track.clips.length} clip{track.clips.length === 1 ? '' : 's'}
                               </div>
                             </div>
-                            <span className={`shrink-0 text-xs ${s.textSecondary}`}>Recommended</span>
                           </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className={`text-sm ${s.textSecondary}`}>
-                        No recommended workspace videos matched this session yet. Try the
-                        full workspace list or choose a local file.
-                      </div>
-                    )
-                  ) : null}
-
-                  {videoDialogTab === 'workspace' ? (
-                    workspaceVideoLoading ? (
-                      <div className="grid gap-2">
-                        {[1, 2, 3].map((item) => (
-                          <div key={item} className={`${s.skeleton} h-16`} />
-                        ))}
-                      </div>
-                    ) : workspaceVideoFiles.length > 0 ? (
-                      <div className="grid gap-2 max-h-[340px] overflow-y-auto">
-                        {[...recommendedWorkspaceVideos, ...otherWorkspaceVideos].map((video) => (
-                          <button
-                            key={video.relativePath}
-                            type="button"
-                            onClick={() => void handleSelectWorkspaceVideo(video)}
-                            className={`flex items-center justify-between gap-3 px-3 py-3 text-left transition-all ${
-                              localVideo?.workspaceRelativePath === video.relativePath
-                                ? `${s.accentBg}`
-                                : s.buttonSecondary
-                            } ${isRound ? 'rounded-xl' : 'rounded-sm'}`}
-                          >
-                            <div className="min-w-0">
-                              <div className={`truncate text-sm font-medium ${s.textPrimary}`}>
-                                {video.name}
-                              </div>
-                              <div className={`text-xs ${s.textSecondary}`}>
-                                {video.relativePath}
-                              </div>
-                            </div>
+                          {isActiveTrack ? (
                             <span className={`shrink-0 text-xs ${s.textSecondary}`}>
-                              {video.collection === 'incoming' ? 'Incoming' : 'Library'}
+                              On stage
                             </span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className={`text-sm ${s.textSecondary}`}>
-                        No workspace videos found in incoming/video or library/video.
-                      </div>
-                    )
-                  ) : null}
-
-                  {videoDialogTab === 'local' ? (
-                    <div className="flex flex-col gap-4">
-                      <p className={`text-sm ${s.textSecondary}`}>
-                        Bind a local file for this browser session. This is fast, but less
-                        portable than binding a workspace video.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={handleChooseFile}
-                        className={`flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm ${s.buttonSecondary}`}
-                      >
-                        <Upload className="h-4 w-4" />
-                        {localVideo ? 'Replace Local File' : 'Choose Local File'}
-                      </button>
-                    </div>
-                  ) : null}
-
-                  {videoDialogTab === 'url' ? (
-                    <div className="flex flex-col gap-3">
-                      <label className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>Link URL</label>
-                      <input
-                        type="url"
-                        value={videoDraftUrl}
-                        onChange={(event) => setVideoDraftUrl(event.target.value)}
-                        placeholder="https://example.com/session-video.mp4"
-                        className={`w-full px-3 py-2 text-sm rounded-lg ${s.input}`}
-                      />
-                      <button
-                        type="button"
-                        onClick={handleLinkVideo}
-                        disabled={videoBusy}
-                        className={`flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm ${s.buttonSecondary} ${
-                          videoBusy ? 'opacity-50 cursor-wait' : ''
-                        }`}
-                      >
-                        {videoBusy ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Link2 className="h-4 w-4" />
-                        )}
-                        Link Video URL
-                      </button>
-                    </div>
-                  ) : null}
-
-                  {workspaceVideoError ? (
-                    <div className="rounded-lg border border-red-300/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-                      {workspaceVideoError}
-                    </div>
-                  ) : null}
-                  {videoFeedback ? (
-                    <div className="rounded-lg border border-red-300/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-                      {videoFeedback}
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className={`rounded-2xl border ${s.divider} p-4 flex flex-col gap-4`}>
-                  {boundWorkspaceVideoBindings.length > 0 || sessionVideos.length > 0 ? (
-                    <div>
-                      <p className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
-                        Bound Videos
-                      </p>
-                      <div className="mt-2 flex max-h-44 flex-col gap-2 overflow-y-auto">
-                        {boundWorkspaceVideoBindings.map((binding) => {
-                          const relativePath = getWorkspaceRelativeBindingPath(binding.path);
-                          const isActive =
-                            localVideo?.sourceKind === 'workspace' &&
-                            localVideo.workspaceRelativePath === relativePath;
-                          return (
+                          ) : null}
+                          {track.draftOnly ? (
                             <button
-                              key={binding.path}
                               type="button"
                               onClick={() => {
-                                void loadWorkspaceVideoIntoPlayer(relativePath, {
-                                  label: binding.label ?? binding.fileName,
-                                  nextVideoType: binding.videoType,
-                                  nextOffsetMs: binding.offsetMs,
-                                  nextSync: binding.sync,
-                                  promptReview: false,
+                                setVideoTrackDrafts((prev) => {
+                                  const next = { ...prev };
+                                  delete next[track.id];
+                                  return next;
                                 });
+                                setExpandedVideoTrackId((prev) => (prev === track.id ? null : prev));
                               }}
-                              className={`px-3 py-2 text-left text-xs transition-colors ${
-                                isActive ? s.accentBg : s.buttonSecondary
-                              } ${isRound ? 'rounded-xl' : 'rounded-sm'}`}
+                              className={`shrink-0 text-xs ${s.textSecondary} hover:opacity-70`}
                             >
-                              <div className={`truncate font-medium ${s.textPrimary}`}>
-                                {binding.label ?? binding.fileName}
-                              </div>
-                              <div className={`truncate ${s.textSecondary}`}>
-                                Workspace · {(binding.offsetMs / 1000).toFixed(1)}s
-                              </div>
+                              Remove
                             </button>
-                          );
-                        })}
-                        {sessionVideos.map((video, index) => {
-                          const isActive =
-                            activeVideo?.origin === 'remote' &&
-                            (video.id ? activeVideo.id === video.id : index === 0);
-                          return (
-                            <button
-                              key={video.id ?? `${video.url}:${index}`}
-                              type="button"
-                              onClick={() => {
-                                setActiveRemoteVideoId(video.id ?? null);
-                                setActiveVideoKey(remoteVideoKey(video));
-                                setVideoDraftUrl(video.url);
-                                setVideoDraftType(video.videoType);
-                                setVideoStageError(null);
-                                setVideoClockMs(0);
-                                setVideoDurationMs(0);
-                                setVideoStageReady(false);
-                                setSyncSessionTimeMs(0);
-                                setSyncVideoTimeMs(0);
-                              }}
-                              className={`px-3 py-2 text-left text-xs transition-colors ${
-                                isActive ? s.accentBg : s.buttonSecondary
-                              } ${isRound ? 'rounded-xl' : 'rounded-sm'}`}
-                            >
-                              <div className={`truncate font-medium ${s.textPrimary}`}>
-                                {video.label ?? video.url}
+                          ) : null}
+                        </div>
+
+                        {isExpanded ? (
+                          <div className={`border-t ${s.divider} p-3 flex flex-col gap-4`}>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="flex flex-col gap-2">
+                                <label className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
+                                  Track Name
+                                </label>
+                                <input
+                                  type="text"
+                                  value={videoTrackDrafts[track.id]?.name ?? trackName}
+                                  onChange={(event) =>
+                                    updateManagedVideoTrackDraft(track, {
+                                      name: event.target.value,
+                                    })
+                                  }
+                                  onBlur={(event) =>
+                                    void commitManagedVideoTrackConfig(track, {
+                                      name: event.target.value,
+                                    })
+                                  }
+                                  className={`w-full px-3 py-2 text-sm rounded-lg ${s.input}`}
+                                />
                               </div>
-                              <div className={`truncate ${s.textSecondary}`}>
-                                Linked URL · {(video.offsetMs / 1000).toFixed(1)}s
+                              <div className="flex flex-col gap-2">
+                                <label className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
+                                  Video Type
+                                </label>
+                                <select
+                                  value={videoTrackDrafts[track.id]?.videoType ?? track.videoType}
+                                  onChange={(event) => {
+                                    const nextType = event.target.value as VideoType;
+                                    updateManagedVideoTrackDraft(track, { videoType: nextType });
+                                    void commitManagedVideoTrackConfig(track, {
+                                      videoType: nextType,
+                                    });
+                                  }}
+                                  className={`w-full px-3 py-2 text-sm rounded-lg ${s.input}`}
+                                >
+                                  <option value="flat">Flat video</option>
+                                  <option value="360">360 video</option>
+                                </select>
                               </div>
-                            </button>
-                          );
-                        })}
+                            </div>
+
+                            {manageClipDetailVideo &&
+                            manageClipDetailVideo.videoTrackId !== track.id ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void moveClipToTrack(manageClipDetailVideo, {
+                                    id: track.id,
+                                    name: trackName,
+                                  })
+                                }
+                                disabled={videoBusy}
+                                className={`px-3 py-2 text-sm ${s.buttonSecondary} ${
+                                  videoBusy ? 'opacity-50 cursor-wait' : ''
+                                }`}
+                              >
+                                Move selected clip here
+                              </button>
+                            ) : null}
+
+                            {track.clips.length > 0 ? (
+                              <div className="flex flex-col gap-2">
+                                <p className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
+                                  Clips
+                                </p>
+                                <div className="grid gap-2">
+                                  {track.clips.map((clip) => {
+                                    const video = clip.source;
+                                    const isManaging = manageClipDetailKey === video.key;
+                                    const localClip = localVideos.find(
+                                      (item) => localVideoKey(item.signature) === video.key,
+                                    );
+                                    const originLabel =
+                                      video.origin === 'remote'
+                                        ? 'URL'
+                                        : localClip?.sourceKind === 'workspace'
+                                          ? 'Workspace'
+                                          : 'Local';
+                                    return (
+                                      <button
+                                        key={video.key}
+                                        type="button"
+                                        onClick={() => setManageClipDetailKey(video.key)}
+                                        className={`px-3 py-2 text-left text-xs transition-colors ${
+                                          isManaging ? s.buttonPrimary : s.buttonSecondary
+                                        } ${isRound ? 'rounded-xl' : 'rounded-sm'}`}
+                                      >
+                                        <div className={`truncate font-medium ${s.textPrimary}`}>
+                                          {video.label ?? video.url}
+                                        </div>
+                                        <div className={`truncate ${s.textSecondary}`}>
+                                          {originLabel} - {(video.offsetMs / 1000).toFixed(1)}s -{' '}
+                                          {clip.durationMs > 0
+                                            ? formatTimestamp(clip.durationMs)
+                                            : 'duration pending'}
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : null}
+
+                            {track.clips.length > 0 ? (
+                              <div>
+                                <p className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
+                                  Track Sync
+                                </p>
+                                <div className="mt-2 grid grid-cols-4 gap-1.5">
+                                  {[
+                                    { label: '-5s', deltaMs: -5000 },
+                                    { label: '-1s', deltaMs: -1000 },
+                                    { label: '+1s', deltaMs: 1000 },
+                                    { label: '+5s', deltaMs: 5000 },
+                                  ].map((item) => (
+                                    <button
+                                      key={item.label}
+                                      type="button"
+                                      onClick={() => {
+                                        void shiftVideoTrackByMs(track.id, item.deltaMs);
+                                      }}
+                                      disabled={videoBusy}
+                                      className={`px-2 py-1.5 text-xs ${s.buttonSecondary} ${
+                                        videoBusy ? 'opacity-50 cursor-wait' : ''
+                                      } ${isRound ? 'rounded-lg' : 'rounded-sm'}`}
+                                      title={`Shift every clip in ${trackName} by ${item.label}`}
+                                    >
+                                      {item.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+
+                            <div className={`flex flex-wrap gap-2 ${s.panel} p-1`}>
+                              {(
+                                [
+                                  ['recommended', 'Recommended'],
+                                  ['workspace', 'Workspace Videos'],
+                                  ['local', 'Local Files'],
+                                  ['url', 'Link URL'],
+                                ] as const
+                              ).map(([tabId, label]) => (
+                                <button
+                                  key={tabId}
+                                  type="button"
+                                  onClick={() => setVideoDialogTab(tabId)}
+                                  className={`px-3 py-2 text-sm transition-all ${
+                                    videoDialogTab === tabId
+                                      ? `${s.accentBg} font-medium`
+                                      : `${s.textSecondary} hover:opacity-70`
+                                  } ${isRound ? 'rounded-xl' : 'rounded-sm'}`}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+
+                            {videoDialogTab === 'recommended' ? (
+                              recommendedWorkspaceVideos.length > 0 ? (
+                                <div className="grid gap-2">
+                                  {recommendedWorkspaceVideos.map((video) => {
+                                    const containingTrack = managedVideoTracks.find((candidate) =>
+                                      candidate.clips.some((clip) => {
+                                        const clipLocalVideo = localVideos.find(
+                                          (item) => localVideoKey(item.signature) === clip.source.key,
+                                        );
+                                        return clipLocalVideo?.workspaceRelativePath === video.relativePath;
+                                      }),
+                                    );
+                                    const isSelected = containingTrack?.id === track.id;
+                                    return (
+                                      <button
+                                        key={video.relativePath}
+                                        type="button"
+                                        onClick={() => void handleSelectWorkspaceVideo(video, track)}
+                                        className={`flex items-center justify-between gap-3 px-3 py-3 text-left transition-all ${
+                                          isSelected ? `${s.accentBg}` : s.buttonSecondary
+                                        } ${isRound ? 'rounded-xl' : 'rounded-sm'}`}
+                                      >
+                                        <div className="min-w-0">
+                                          <div className={`truncate text-sm font-medium ${s.textPrimary}`}>
+                                            {video.name}
+                                          </div>
+                                          <div className={`text-xs ${s.textSecondary}`}>
+                                            {video.relativePath}
+                                          </div>
+                                        </div>
+                                        <span className={`shrink-0 text-xs ${s.textSecondary}`}>
+                                          {isSelected
+                                            ? 'Added'
+                                            : containingTrack
+                                              ? 'Move Here'
+                                              : 'Add Clip'}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className={`text-sm ${s.textSecondary}`}>
+                                  No recommended workspace videos matched this session yet.
+                                </div>
+                              )
+                            ) : null}
+
+                            {videoDialogTab === 'workspace' ? (
+                              workspaceVideoLoading ? (
+                                <div className="grid gap-2">
+                                  {[1, 2, 3].map((item) => (
+                                    <div key={item} className={`${s.skeleton} h-16`} />
+                                  ))}
+                                </div>
+                              ) : workspaceVideoFiles.length > 0 ? (
+                                <div className="grid gap-2 max-h-[260px] overflow-y-auto">
+                                  {[...recommendedWorkspaceVideos, ...otherWorkspaceVideos].map((video) => {
+                                    const containingTrack = managedVideoTracks.find((candidate) =>
+                                      candidate.clips.some((clip) => {
+                                        const clipLocalVideo = localVideos.find(
+                                          (item) => localVideoKey(item.signature) === clip.source.key,
+                                        );
+                                        return clipLocalVideo?.workspaceRelativePath === video.relativePath;
+                                      }),
+                                    );
+                                    const isSelected = containingTrack?.id === track.id;
+                                    return (
+                                      <button
+                                        key={video.relativePath}
+                                        type="button"
+                                        onClick={() => void handleSelectWorkspaceVideo(video, track)}
+                                        className={`flex items-center justify-between gap-3 px-3 py-3 text-left transition-all ${
+                                          isSelected ? `${s.accentBg}` : s.buttonSecondary
+                                        } ${isRound ? 'rounded-xl' : 'rounded-sm'}`}
+                                      >
+                                        <div className="min-w-0">
+                                          <div className={`truncate text-sm font-medium ${s.textPrimary}`}>
+                                            {video.name}
+                                          </div>
+                                          <div className={`text-xs ${s.textSecondary}`}>
+                                            {video.relativePath}
+                                          </div>
+                                        </div>
+                                        <span className={`shrink-0 text-xs ${s.textSecondary}`}>
+                                          {isSelected
+                                            ? 'Added'
+                                            : containingTrack
+                                              ? 'Move Here'
+                                              : video.collection === 'incoming'
+                                                ? 'Incoming'
+                                                : 'Library'}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className={`text-sm ${s.textSecondary}`}>
+                                  No workspace videos found in incoming/video or library/video.
+                                </div>
+                              )
+                            ) : null}
+
+                            {videoDialogTab === 'local' ? (
+                              <div className="flex flex-col gap-3">
+                                <button
+                                  type="button"
+                                  onClick={() => handleChooseFile(track.id)}
+                                  className={`flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm ${s.buttonSecondary}`}
+                                >
+                                  <Upload className="h-4 w-4" />
+                                  {track.clips.some((clip) => {
+                                    const localClip = localVideos.find(
+                                      (item) => localVideoKey(item.signature) === clip.source.key,
+                                    );
+                                    return localClip?.sourceKind !== 'workspace';
+                                  })
+                                    ? 'Add Local Files'
+                                    : 'Choose Local Files'}
+                                </button>
+                              </div>
+                            ) : null}
+
+                            {videoDialogTab === 'url' ? (
+                              <div className="flex flex-col gap-3">
+                                <label className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
+                                  Link URL
+                                </label>
+                                <input
+                                  type="url"
+                                  value={videoDraftUrl}
+                                  onChange={(event) => setVideoDraftUrl(event.target.value)}
+                                  placeholder="https://example.com/session-video.mp4"
+                                  className={`w-full px-3 py-2 text-sm rounded-lg ${s.input}`}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleLinkVideo({
+                                      id: track.id,
+                                      name: trackName,
+                                      videoType: track.videoType,
+                                    })
+                                  }
+                                  disabled={videoBusy}
+                                  className={`flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm ${s.buttonSecondary} ${
+                                    videoBusy ? 'opacity-50 cursor-wait' : ''
+                                  }`}
+                                >
+                                  {videoBusy ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Link2 className="h-4 w-4" />
+                                  )}
+                                  Link URL to This Track
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
-                    </div>
-                  ) : null}
+                    );
+                  })}
+                </div>
+              )}
 
-                  <div>
-                    <p className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
-                      Current Video Status
-                    </p>
-                    <div className={`mt-2 text-sm font-semibold ${s.textPrimary}`}>
-                      {activeVideo ? activeVideo.label ?? activeVideo.url : 'No video attached'}
+              {workspaceVideoError ? (
+                <div className="rounded-lg border border-red-300/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                  {workspaceVideoError}
+                </div>
+              ) : null}
+              {videoFeedback ? (
+                <div className="rounded-lg border border-red-300/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                  {videoFeedback}
+                </div>
+              ) : null}
+            </div>
+
+            {manageClipDetailVideo ? (
+              <div
+                className="absolute inset-0 z-[110] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+                onClick={() => setManageClipDetailKey(null)}
+                role="presentation"
+              >
+                <div
+                  className={`${s.panel} flex w-full max-w-lg flex-col gap-4 rounded-2xl border p-6 shadow-2xl`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className={`text-xs uppercase tracking-wider ${s.textSecondary}`}>
+                        Selected clip
+                      </p>
+                      <h4 className={`truncate text-lg font-semibold ${s.textPrimary}`}>
+                        {manageClipDetailVideo.label ?? manageClipDetailVideo.url}
+                      </h4>
+                      <p className={`mt-1 text-xs ${s.textSecondary}`}>
+                        {manageClipDetailVideo.videoTrackName} · offset{' '}
+                        {(manageClipDetailVideo.offsetMs / 1000).toFixed(1)}s ·{' '}
+                        {manageClipDetailVideo.videoType === '360' ? '360°' : 'Flat'}
+                      </p>
                     </div>
-                    <div className={`mt-1 text-xs ${s.textSecondary}`}>
-                      {activeVideoSummary}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setManageClipDetailKey(null)}
+                      className={`shrink-0 rounded-full p-1 transition-colors hover:bg-current/10 ${s.textSecondary}`}
+                      aria-label="Close clip settings"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
                   </div>
-
-                  <div className={`rounded-xl ${s.accentBg} p-3 text-sm ${s.textSecondary}`}>
-                    Bind in Replay, then use Sync to confirm alignment. Workspace videos are
-                    preferred because they can be recovered from the current workspace.
+                  <p className={`text-xs ${s.textSecondary}`}>
+                    Use &ldquo;Move selected clip here&rdquo; on a track below to change tracks.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVideoNeedsReview(false);
+                        handleOpenSyncForManageClip();
+                      }}
+                      className={`px-4 py-2 text-sm ${s.buttonPrimary}`}
+                    >
+                      Adjust sync…
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVideoNeedsReview(false)}
+                      className={`px-4 py-2 text-sm ${s.buttonSecondary}`}
+                    >
+                      Keep current offset
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleResetManageClipOffset();
+                        setVideoNeedsReview(false);
+                      }}
+                      disabled={videoBusy}
+                      className={`px-4 py-2 text-sm ${s.buttonSecondary}`}
+                    >
+                      Reset to default offset
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleRemoveManageClip();
+                      }}
+                      disabled={videoBusy}
+                      className={`flex items-center justify-center gap-2 border border-red-500/30 px-4 py-2 text-sm text-red-500 transition-colors hover:bg-red-500/10 ${
+                        videoBusy ? 'cursor-wait opacity-50' : ''
+                      }`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Remove clip
+                    </button>
                   </div>
-
-                  {activeVideo ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsVideoDialogOpen(false);
-                          handleOpenSync();
-                        }}
-                        className={`px-4 py-2 text-sm ${s.buttonPrimary}`}
-                      >
-                        Adjust Sync Now
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setVideoNeedsReview(false);
-                          setIsVideoDialogOpen(false);
-                        }}
-                        className={`px-4 py-2 text-sm ${s.buttonSecondary}`}
-                      >
-                        Keep Current Offset
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void handleResetOffsetToDefault();
-                          setVideoNeedsReview(false);
-                        }}
-                        disabled={
-                          videoBusy || activeVideo.offsetMs === activeVideoDefaultOffsetMs
-                        }
-                        className={`px-4 py-2 text-sm ${s.buttonSecondary} ${
-                          videoBusy || activeVideo.offsetMs === activeVideoDefaultOffsetMs
-                            ? 'opacity-50 cursor-not-allowed'
-                            : ''
-                        }`}
-                      >
-                        Reset to Default Offset
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void handleRemoveVideo();
-                          setIsVideoDialogOpen(false);
-                        }}
-                        disabled={videoBusy}
-                        className={`flex items-center justify-center gap-2 px-4 py-2 text-sm border border-red-500/30 text-red-500 hover:bg-red-500/10 transition-colors ${
-                          videoBusy ? 'opacity-50 cursor-wait' : ''
-                        }`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        Remove Video
-                      </button>
-                    </>
-                  ) : (
-                    <div className={`text-sm ${s.textSecondary}`}>
-                      Once a video is attached, you can confirm or refine sync here.
-                    </div>
-                  )}
                 </div>
               </div>
-            </div>
+            ) : null}
           </div>
         )}
       </main>

@@ -1,4 +1,10 @@
-import type { VideoSyncBinding, VideoType, WorkspaceMode } from '@/types/models';
+import type {
+  VideoPlacementConfidence,
+  VideoPlacementSource,
+  VideoSyncBinding,
+  VideoType,
+  WorkspaceMode,
+} from '@/types/models';
 import type { SplitDirection, SurfaceRole, WorkspacePreset } from '@/types/workspace';
 import { isVideoSyncBinding } from '@/utils/videoSync';
 
@@ -9,8 +15,12 @@ const REMOTE_ROLE_KEY_PREFIX = 'sailsiq_remote_surface_role:';
 const SPLIT_DIRECTION_KEY_PREFIX = 'sailsiq_split_direction:';
 
 interface StoredLocalVideoPrefs {
+  videoTrackId?: string;
+  videoTrackName?: string;
   offsetMs: number;
   sync?: VideoSyncBinding;
+  placementSource?: VideoPlacementSource;
+  placementConfidence?: VideoPlacementConfidence;
   videoType: VideoType;
 }
 
@@ -70,8 +80,16 @@ export function loadLocalVideoPrefs(
       (parsed.videoType === 'flat' || parsed.videoType === '360')
     ) {
       return {
+        ...(typeof parsed.videoTrackId === 'string' ? { videoTrackId: parsed.videoTrackId } : {}),
+        ...(typeof parsed.videoTrackName === 'string' ? { videoTrackName: parsed.videoTrackName } : {}),
         offsetMs: parsed.offsetMs,
         ...(isVideoSyncBinding(parsed.sync) ? { sync: parsed.sync } : {}),
+        ...(isVideoPlacementSource(parsed.placementSource)
+          ? { placementSource: parsed.placementSource }
+          : {}),
+        ...(isVideoPlacementConfidence(parsed.placementConfidence)
+          ? { placementConfidence: parsed.placementConfidence }
+          : {}),
         videoType: parsed.videoType,
       };
     }
@@ -80,6 +98,19 @@ export function loadLocalVideoPrefs(
   }
 
   return null;
+}
+
+function isVideoPlacementSource(value: unknown): value is VideoPlacementSource {
+  return (
+    value === 'metadata' ||
+    value === 'file-time' ||
+    value === 'sequential-fallback' ||
+    value === 'manual'
+  );
+}
+
+function isVideoPlacementConfidence(value: unknown): value is VideoPlacementConfidence {
+  return value === 'high' || value === 'medium' || value === 'low';
 }
 
 export function saveLocalVideoPrefs(

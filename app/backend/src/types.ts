@@ -109,13 +109,36 @@ export interface VideoSyncBinding {
   updatedAt: string;
 }
 
+export type VideoPlacementSource =
+  | 'metadata'
+  | 'file-time'
+  | 'sequential-fallback'
+  | 'manual';
+
+export type VideoPlacementConfidence = 'high' | 'medium' | 'low';
+
+export interface VideoTrack {
+  id: string;
+  sessionId: string;
+  name: string;
+  color?: string;
+  visible: boolean;
+  locked?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SessionVideo {
   id?: string;
+  videoTrackId?: string;
+  videoTrackName?: string;
   videoType: VideoType;
   url: string;
   label?: string;
   offsetMs: number;
   sync?: VideoSyncBinding;
+  placementSource?: VideoPlacementSource;
+  placementConfidence?: VideoPlacementConfidence;
   linkedAt: string;
   updatedAt: string;
 }
