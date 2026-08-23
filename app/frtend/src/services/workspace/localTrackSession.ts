@@ -6,12 +6,17 @@ import {
   getSessionNameFromImportFile,
   parseImportBytes,
 } from '../../../../shared/trackImport';
+import {
+  parseTelemetryImportBytes,
+  type ParsedTelemetryImport,
+} from '../../../../shared/telemetryImport';
 import { detectManeuvers } from '../../../../shared/maneuverDetection';
 import type {
   Mark,
   ParseResult,
   Session,
   SessionEvent,
+  TelemetryDataset,
   TrackPoint,
   TrackStream,
 } from '@/types/models';
@@ -56,12 +61,72 @@ export interface LocalWorkspaceSessionBundle {
   track: TrackPoint[];
   tracks: TrackStream[];
   trackPointsById: Record<string, TrackPoint[]>;
+  telemetryDatasets: TelemetryDataset[];
   events: SessionEvent[];
   marks: Mark[];
   bindings: WorkspaceSessionBindingsManifest | null;
 }
 
-const TRACK_EXTENSIONS = new Set(['.gpx', '.ubx', '.bin']);
+export interface LocalWorkspaceSessionShell {
+  session: Session;
+  tracks: TrackStream[];
+  telemetryDatasets: TelemetryDataset[];
+  events: SessionEvent[];
+  marks: Mark[];
+  bindings: WorkspaceSessionBindingsManifest | null;
+}
+
+export interface LocalTrackPointsChunk {
+  trackId: string;
+  points: TrackPoint[];
+  chunkIndex: number;
+  chunkCount: number;
+  totalPoints: number;
+}
+
+export interface LocalTelemetryDatasetChunk {
+  datasetId: string;
+  dataset: TelemetryDataset;
+  chunkIndex: number;
+  chunkCount: number;
+}
+
+interface TrackPointsChunkManifest {
+  version: 1;
+  trackId: string;
+  chunkSize: number;
+  pointCount: number;
+  chunks: Array<{
+    fileName: string;
+    startIndex: number;
+    endIndex: number;
+    startMs: number;
+    endMs: number;
+  }>;
+}
+
+interface TelemetryDatasetChunkManifest {
+  version: 1;
+  chunkSize: number;
+  datasets: TelemetryDataset[];
+  chunksByDatasetId: Record<
+    string,
+    Array<{
+      fileName: string;
+      chunkIndex: number;
+      startSampleIndex: number;
+      endSampleIndex: number;
+      startMs: number;
+      endMs: number;
+    }>
+  >;
+}
+
+type TelemetryDatasetChunkInfo =
+  TelemetryDatasetChunkManifest['chunksByDatasetId'][string][number];
+
+const TRACK_EXTENSIONS = new Set(['.gpx', '.ubx', '.bin', '.csv', '.tsv', '.txt']);
+const TELEMETRY_EXTENSIONS = new Set(['.csv', '.tsv', '.txt']);
 const VIDEO_EXTENSIONS = new Set([
   '.mp4',
   '.mov',
@@ -70,6 +135,8 @@ const VIDEO_EXTENSIONS = new Set([
   '.mkv',
   '.avi',
 ]);
+const TRACK_POINT_CHUNK_SIZE = 10000;
+const TELEMETRY_SAMPLE_CHUNK_SIZE = 500;
 
 function fileNotFound(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'NotFoundError';
@@ -147,10 +214,7 @@ async function readLocalTrackBundle(
     await Promise.all(
       tracks.map(async (track) => {
         trackPointsById[track.id] = tracksDirectory
-          ? (await readWorkspaceJsonFile<TrackPoint[]>(
-              tracksDirectory,
-              `${track.id}.json`,
-            )) ?? []
+          ? await readTrackPointsForTrack(tracksDirectory, track.id)
           : [];
       }),
     );
@@ -211,6 +275,14 @@ export async function parseLocalTrackFile(
 ): Promise<ParsedImportTrack> {
   const bytes = await file.arrayBuffer();
   return parseImportBytes(file.name, bytes);
+}
+
+export async function parseLocalTelemetryFile(
+  file: File,
+  options: { sessionId?: string } = {},
+): Promise<ParsedTelemetryImport> {
+  const bytes = await file.arrayBuffer();
+  return parseTelemetryImportBytes(file.name, bytes, options);
 }
 
 export function getSessionNameFromLocalTrackFile(fileName: string): string {
@@ -370,16 +442,489 @@ export async function getLocalWorkspaceSessionBundle(
     sessionDirectory,
     session,
   );
+  const telemetryDatasets = await readFullTelemetryDatasets(sessionDirectory);
 
   return {
     session,
     track: primaryPoints,
     tracks,
     trackPointsById,
+    telemetryDatasets,
     events: events ?? [],
     marks: marks ?? [],
     bindings,
   };
+}
+
+async function readTrackPointsForTrack(
+  tracksDirectory: FileSystemDirectoryHandle,
+  trackId: string,
+): Promise<TrackPoint[]> {
+  const chunked = await readChunkedTrackPoints(tracksDirectory, trackId);
+  if (chunked) return chunked;
+
+  const points =
+    (await readWorkspaceJsonFile<TrackPoint[]>(tracksDirectory, `${trackId}.json`)) ?? [];
+  if (points.length > TRACK_POINT_CHUNK_SIZE) {
+    await writeChunkedTrackPoints(tracksDirectory, trackId, points);
+  }
+  return points;
+}
+
+async function getTrackPointsDirectory(
+  tracksDirectory: FileSystemDirectoryHandle,
+  trackId: string,
+  create: boolean,
+): Promise<FileSystemDirectoryHandle | null> {
+  try {
+    return await tracksDirectory.getDirectoryHandle(trackId, { create });
+  } catch (error) {
+    if (fileNotFound(error)) return null;
+    throw error;
+  }
+}
+
+async function readChunkedTrackPoints(
+  tracksDirectory: FileSystemDirectoryHandle,
+  trackId: string,
+): Promise<TrackPoint[] | null> {
+  const pointsDirectory = await getTrackPointsDirectory(tracksDirectory, trackId, false);
+  if (!pointsDirectory) return null;
+
+  const manifest = await readWorkspaceJsonFile<TrackPointsChunkManifest>(
+    pointsDirectory,
+    'manifest.json',
+  );
+  if (!manifest || manifest.version !== 1 || manifest.chunks.length === 0) {
+    return null;
+  }
+
+  const chunks = await Promise.all(
+    manifest.chunks.map(
+      async (chunk) =>
+        (await readWorkspaceJsonFile<TrackPoint[]>(pointsDirectory, chunk.fileName)) ?? [],
+    ),
+  );
+  return chunks.flat();
+}
+
+async function writeChunkedTrackPoints(
+  tracksDirectory: FileSystemDirectoryHandle,
+  trackId: string,
+  points: TrackPoint[],
+): Promise<void> {
+  const pointsDirectory = await getTrackPointsDirectory(tracksDirectory, trackId, true);
+  if (!pointsDirectory) return;
+
+  const chunks: TrackPointsChunkManifest['chunks'] = [];
+  for (let start = 0, chunkIndex = 0; start < points.length; start += TRACK_POINT_CHUNK_SIZE, chunkIndex++) {
+    const chunkPoints = points.slice(start, start + TRACK_POINT_CHUNK_SIZE);
+    const endIndex = start + chunkPoints.length - 1;
+    const fileName = `chunk-${String(chunkIndex).padStart(5, '0')}.json`;
+    await writeWorkspaceJsonFile(pointsDirectory, fileName, chunkPoints);
+    chunks.push({
+      fileName,
+      startIndex: start,
+      endIndex,
+      startMs: chunkPoints[0]?.t ?? 0,
+      endMs: chunkPoints[chunkPoints.length - 1]?.t ?? chunkPoints[0]?.t ?? 0,
+    });
+  }
+
+  await writeWorkspaceJsonFile(pointsDirectory, 'manifest.json', {
+    version: 1,
+    trackId,
+    chunkSize: TRACK_POINT_CHUNK_SIZE,
+    pointCount: points.length,
+    chunks,
+  } satisfies TrackPointsChunkManifest);
+}
+
+function stripTelemetrySamples(dataset: TelemetryDataset): TelemetryDataset {
+  return {
+    ...dataset,
+    channels: dataset.channels.map((channel) => ({
+      ...channel,
+      samples: [],
+    })),
+  };
+}
+
+function appendTelemetryChunk(
+  base: TelemetryDataset,
+  chunk: TelemetryDataset,
+): TelemetryDataset {
+  const chunkChannels = new Map(chunk.channels.map((channel) => [channel.id, channel]));
+  return {
+    ...base,
+    channels: base.channels.map((channel) => ({
+      ...channel,
+      samples: [
+        ...channel.samples,
+        ...(chunkChannels.get(channel.id)?.samples ?? []),
+      ],
+    })),
+  };
+}
+
+async function getTelemetryDirectory(
+  sessionDirectory: FileSystemDirectoryHandle,
+  create: boolean,
+): Promise<FileSystemDirectoryHandle | null> {
+  try {
+    return await sessionDirectory.getDirectoryHandle('telemetry', { create });
+  } catch (error) {
+    if (fileNotFound(error)) return null;
+    throw error;
+  }
+}
+
+async function readTelemetryManifest(
+  sessionDirectory: FileSystemDirectoryHandle,
+): Promise<{
+  directory: FileSystemDirectoryHandle;
+  manifest: TelemetryDatasetChunkManifest;
+} | null> {
+  const directory = await getTelemetryDirectory(sessionDirectory, false);
+  if (!directory) return null;
+  const manifest = await readWorkspaceJsonFile<TelemetryDatasetChunkManifest>(
+    directory,
+    'manifest.json',
+  );
+  if (!manifest || manifest.version !== 1) return null;
+  return { directory, manifest: normalizeTelemetryManifestChunkTimes(manifest) };
+}
+
+function normalizeTelemetryManifestChunkTimes(
+  manifest: TelemetryDatasetChunkManifest,
+): TelemetryDatasetChunkManifest {
+  const datasetsById = new Map(manifest.datasets.map((dataset) => [dataset.id, dataset]));
+  const chunksByDatasetId: TelemetryDatasetChunkManifest['chunksByDatasetId'] = {};
+
+  Object.entries(manifest.chunksByDatasetId).forEach(([datasetId, chunks]) => {
+    const dataset = datasetsById.get(datasetId);
+    const sortedChunks = [...chunks].sort((a, b) => a.chunkIndex - b.chunkIndex);
+    const maxEndIndex = Math.max(0, ...sortedChunks.map((chunk) => chunk.endSampleIndex));
+    chunksByDatasetId[datasetId] = sortedChunks.map((chunk) => {
+      if (Number.isFinite(chunk.startMs) && Number.isFinite(chunk.endMs)) {
+        return chunk;
+      }
+
+      const durationMs = Math.max(0, dataset?.durationMs ?? 0);
+      const startRatio = maxEndIndex > 0 ? chunk.startSampleIndex / maxEndIndex : 0;
+      const endRatio = maxEndIndex > 0 ? chunk.endSampleIndex / maxEndIndex : 0;
+      return {
+        ...chunk,
+        startMs: Math.round(durationMs * startRatio),
+        endMs: Math.round(durationMs * endRatio),
+      };
+    });
+  });
+
+  return {
+    ...manifest,
+    chunksByDatasetId,
+  };
+}
+
+async function readTelemetryShell(
+  sessionDirectory: FileSystemDirectoryHandle,
+): Promise<TelemetryDataset[]> {
+  const chunked = await readTelemetryManifest(sessionDirectory);
+  if (chunked) return chunked.manifest.datasets;
+
+  // Legacy telemetry.json can be very large; skip it in the shell path and let
+  // the background chunk loader read and migrate it.
+  return [];
+}
+
+async function readFullTelemetryDatasets(
+  sessionDirectory: FileSystemDirectoryHandle,
+): Promise<TelemetryDataset[]> {
+  const chunked = await readTelemetryManifest(sessionDirectory);
+  if (!chunked) {
+    const legacy =
+      (await readWorkspaceJsonFile<TelemetryDataset[]>(sessionDirectory, 'telemetry.json')) ?? [];
+    if (legacy.length > 0) {
+      await writeChunkedTelemetryDatasets(sessionDirectory, legacy);
+    }
+    return legacy;
+  }
+
+  const byId = new Map(
+    chunked.manifest.datasets.map((dataset) => [dataset.id, stripTelemetrySamples(dataset)]),
+  );
+
+  for (const dataset of chunked.manifest.datasets) {
+    const chunks = chunked.manifest.chunksByDatasetId[dataset.id] ?? [];
+    for (const chunk of chunks) {
+      const chunkDataset = await readWorkspaceJsonFile<TelemetryDataset>(
+        chunked.directory,
+        chunk.fileName,
+      );
+      if (!chunkDataset) continue;
+      const current = byId.get(dataset.id) ?? stripTelemetrySamples(dataset);
+      byId.set(dataset.id, appendTelemetryChunk(current, chunkDataset));
+    }
+  }
+
+  return Array.from(byId.values());
+}
+
+async function writeChunkedTelemetryDatasets(
+  sessionDirectory: FileSystemDirectoryHandle,
+  datasets: TelemetryDataset[],
+): Promise<void> {
+  const directory = await getTelemetryDirectory(sessionDirectory, true);
+  if (!directory) return;
+
+  const chunksByDatasetId: TelemetryDatasetChunkManifest['chunksByDatasetId'] = {};
+  for (const dataset of datasets) {
+    const maxSamples = Math.max(0, ...dataset.channels.map((channel) => channel.samples.length));
+    const chunks = [];
+    for (let start = 0, chunkIndex = 0; start < maxSamples; start += TELEMETRY_SAMPLE_CHUNK_SIZE, chunkIndex++) {
+      const end = Math.min(maxSamples, start + TELEMETRY_SAMPLE_CHUNK_SIZE);
+      const chunkDataset: TelemetryDataset = {
+        ...stripTelemetrySamples(dataset),
+        channels: dataset.channels.map((channel) => ({
+          ...channel,
+          samples: channel.samples.slice(start, end),
+        })),
+      };
+      const fileName = `${dataset.id}-chunk-${String(chunkIndex).padStart(5, '0')}.json`;
+      await writeWorkspaceJsonFile(directory, fileName, chunkDataset);
+      const chunkTimes = chunkDataset.channels.flatMap((channel) =>
+        channel.samples.map((sample) => sample.t),
+      );
+      chunks.push({
+        fileName,
+        chunkIndex,
+        startSampleIndex: start,
+        endSampleIndex: end - 1,
+        startMs: chunkTimes.length > 0 ? Math.min(...chunkTimes) : 0,
+        endMs: chunkTimes.length > 0 ? Math.max(...chunkTimes) : 0,
+      });
+    }
+    chunksByDatasetId[dataset.id] = chunks;
+  }
+
+  await writeWorkspaceJsonFile(directory, 'manifest.json', {
+    version: 1,
+    chunkSize: TELEMETRY_SAMPLE_CHUNK_SIZE,
+    datasets: datasets.map(stripTelemetrySamples),
+    chunksByDatasetId,
+  } satisfies TelemetryDatasetChunkManifest);
+}
+
+async function readLocalTrackShell(
+  sessionDirectory: FileSystemDirectoryHandle,
+  session: Session,
+): Promise<TrackStream[]> {
+  const tracks = await readWorkspaceJsonFile<TrackStream[]>(
+    sessionDirectory,
+    'tracks.json',
+  );
+  if (tracks && tracks.length > 0) return tracks;
+
+  const legacyPoints =
+    (await readWorkspaceJsonFile<TrackPoint[]>(sessionDirectory, 'track.json')) ?? [];
+  return [createTrackStream(session, legacyPoints, { id: 'primary' })];
+}
+
+export async function getLocalWorkspaceSessionShell(
+  workspaceId: string,
+  sessionId: string,
+): Promise<LocalWorkspaceSessionShell | null> {
+  const workspaceHandle = await getRequiredWorkspaceDirectoryHandle(workspaceId);
+  const sessionDirectory = await getExistingSessionDirectory(workspaceHandle, sessionId);
+  if (!sessionDirectory) return null;
+
+  const [session, events, marks, bindings] = await Promise.all([
+    readWorkspaceJsonFile<Session>(sessionDirectory, 'session.json'),
+    readWorkspaceJsonFile<SessionEvent[]>(sessionDirectory, 'events.json'),
+    readWorkspaceJsonFile<Mark[]>(sessionDirectory, 'marks.json'),
+    readWorkspaceJsonFile<WorkspaceSessionBindingsManifest>(
+      sessionDirectory,
+      'bindings.json',
+    ),
+  ]);
+
+  if (!session) return null;
+
+  const [tracks, telemetryDatasets] = await Promise.all([
+    readLocalTrackShell(sessionDirectory, session),
+    readTelemetryShell(sessionDirectory),
+  ]);
+
+  return {
+    session,
+    tracks,
+    telemetryDatasets,
+    events: events ?? [],
+    marks: marks ?? [],
+    bindings,
+  };
+}
+
+export async function loadLocalWorkspaceTrackPointsInChunks(
+  workspaceId: string,
+  sessionId: string,
+  trackId: string,
+  onChunk: (chunk: LocalTrackPointsChunk) => void,
+): Promise<TrackPoint[]> {
+  const workspaceHandle = await getRequiredWorkspaceDirectoryHandle(workspaceId);
+  const sessionDirectory = await getExistingSessionDirectory(workspaceHandle, sessionId);
+  if (!sessionDirectory) return [];
+
+  let tracksDirectory: FileSystemDirectoryHandle | null = null;
+  try {
+    tracksDirectory = await sessionDirectory.getDirectoryHandle('tracks');
+  } catch (error) {
+    if (!fileNotFound(error)) throw error;
+  }
+
+  if (!tracksDirectory) {
+    const legacyPoints =
+      (await readWorkspaceJsonFile<TrackPoint[]>(sessionDirectory, 'track.json')) ?? [];
+    onChunk({
+      trackId,
+      points: legacyPoints,
+      chunkIndex: 0,
+      chunkCount: legacyPoints.length > 0 ? 1 : 0,
+      totalPoints: legacyPoints.length,
+    });
+    return legacyPoints;
+  }
+
+  const pointsDirectory = await getTrackPointsDirectory(tracksDirectory, trackId, false);
+  const manifest = pointsDirectory
+    ? await readWorkspaceJsonFile<TrackPointsChunkManifest>(pointsDirectory, 'manifest.json')
+    : null;
+
+  if (pointsDirectory && manifest?.version === 1 && manifest.chunks.length > 0) {
+    const allPoints: TrackPoint[] = [];
+    for (const [chunkIndex, chunk] of manifest.chunks.entries()) {
+      const points =
+        (await readWorkspaceJsonFile<TrackPoint[]>(pointsDirectory, chunk.fileName)) ?? [];
+      allPoints.push(...points);
+      onChunk({
+        trackId,
+        points,
+        chunkIndex,
+        chunkCount: manifest.chunks.length,
+        totalPoints: manifest.pointCount,
+      });
+    }
+    return allPoints;
+  }
+
+  const points =
+    (await readWorkspaceJsonFile<TrackPoint[]>(tracksDirectory, `${trackId}.json`)) ?? [];
+  if (points.length > TRACK_POINT_CHUNK_SIZE) {
+    await writeChunkedTrackPoints(tracksDirectory, trackId, points);
+  }
+
+  const chunkCount = Math.ceil(points.length / TRACK_POINT_CHUNK_SIZE);
+  for (let start = 0, chunkIndex = 0; start < points.length; start += TRACK_POINT_CHUNK_SIZE, chunkIndex++) {
+    onChunk({
+      trackId,
+      points: points.slice(start, start + TRACK_POINT_CHUNK_SIZE),
+      chunkIndex,
+      chunkCount,
+      totalPoints: points.length,
+    });
+  }
+
+  return points;
+}
+
+export async function loadLocalWorkspaceTelemetryDatasetsInChunks(
+  workspaceId: string,
+  sessionId: string,
+  onChunk: (chunk: LocalTelemetryDatasetChunk) => void,
+  options: { timeWindow?: { startMs: number; endMs: number } } = {},
+): Promise<TelemetryDataset[]> {
+  const workspaceHandle = await getRequiredWorkspaceDirectoryHandle(workspaceId);
+  const sessionDirectory = await getExistingSessionDirectory(workspaceHandle, sessionId);
+  if (!sessionDirectory) return [];
+
+  const chunked = await readTelemetryManifest(sessionDirectory);
+  if (chunked) {
+    const completed = new Map<string, TelemetryDataset>();
+    for (const dataset of chunked.manifest.datasets) {
+      const chunks = chunked.manifest.chunksByDatasetId[dataset.id] ?? [];
+      let current = stripTelemetrySamples(dataset);
+      if (chunks.length === 0) {
+        completed.set(dataset.id, current);
+        continue;
+      }
+
+      for (const chunk of chunks) {
+        if (
+          options.timeWindow &&
+          (chunk.endMs < options.timeWindow.startMs || chunk.startMs > options.timeWindow.endMs)
+        ) {
+          continue;
+        }
+        const chunkDataset = await readWorkspaceJsonFile<TelemetryDataset>(
+          chunked.directory,
+          chunk.fileName,
+        );
+        if (!chunkDataset) continue;
+        current = appendTelemetryChunk(current, chunkDataset);
+        onChunk({
+          datasetId: dataset.id,
+          dataset: chunkDataset,
+          chunkIndex: chunk.chunkIndex,
+          chunkCount: chunks.length,
+        });
+      }
+      completed.set(dataset.id, current);
+    }
+    return Array.from(completed.values());
+  }
+
+  const legacy =
+    (await readWorkspaceJsonFile<TelemetryDataset[]>(sessionDirectory, 'telemetry.json')) ?? [];
+  if (legacy.length > 0) {
+    await writeChunkedTelemetryDatasets(sessionDirectory, legacy);
+    return loadLocalWorkspaceTelemetryDatasetsInChunks(
+      workspaceId,
+      sessionId,
+      onChunk,
+      options,
+    );
+  }
+  return legacy;
+}
+
+export async function saveLocalWorkspaceTelemetryDatasets(
+  workspaceId: string,
+  sessionId: string,
+  datasets: TelemetryDataset[],
+): Promise<void> {
+  const sessionDirectory = await getSessionDirectory(workspaceId, sessionId);
+  await writeChunkedTelemetryDatasets(sessionDirectory, datasets);
+}
+
+export async function importLocalWorkspaceTelemetryFile(
+  workspaceId: string,
+  sessionId: string,
+  file: File,
+): Promise<ParsedTelemetryImport> {
+  if (!TELEMETRY_EXTENSIONS.has(getFileExtension(file.name))) {
+    throw new Error('Only CSV, TSV, and delimited text sensor telemetry files are supported.');
+  }
+
+  const parsed = await parseLocalTelemetryFile(file, { sessionId });
+  const sessionDirectory = await getSessionDirectory(workspaceId, sessionId);
+  const existing = await readFullTelemetryDatasets(sessionDirectory);
+  const withoutSameId = existing.filter((dataset) => dataset.id !== parsed.dataset.id);
+  await writeChunkedTelemetryDatasets(sessionDirectory, [
+    ...withoutSameId,
+    parsed.dataset,
+  ]);
+  return parsed;
 }
 
 export async function saveLocalWorkspaceSessionVideoBindings(
@@ -437,6 +982,9 @@ export async function createLocalImportedTrackSession(
   }
 
   const parsedTrack = input.parsedTrack ?? (await parseLocalTrackFile(input.sourceFile));
+  const parsedTelemetry = TELEMETRY_EXTENSIONS.has(getFileExtension(input.sourceFile.name))
+    ? await parseLocalTelemetryFile(input.sourceFile, { sessionId: input.session.id }).catch(() => null)
+    : null;
   const now = new Date().toISOString();
   const sessionDirectory = await getSessionDirectory(input.workspaceId, input.session.id);
   const session: Session = {
@@ -534,8 +1082,10 @@ export async function createLocalImportedTrackSession(
   await writeWorkspaceJsonFile(sessionDirectory, 'session.json', session);
   await writeWorkspaceJsonFile(sessionDirectory, 'tracks.json', [primaryTrack]);
   const tracksDirectory = await ensureWorkspaceSubdirectory(sessionDirectory, 'tracks');
-  await writeWorkspaceJsonFile(tracksDirectory, `${primaryTrack.id}.json`, trackPoints);
-  await writeWorkspaceJsonFile(sessionDirectory, 'track.json', trackPoints);
+  await writeChunkedTrackPoints(tracksDirectory, primaryTrack.id, trackPoints);
+  if (parsedTelemetry && parsedTelemetry.dataset.channels.length > 0) {
+    await writeChunkedTelemetryDatasets(sessionDirectory, [parsedTelemetry.dataset]);
+  }
   await writeWorkspaceJsonFile(sessionDirectory, 'events.json', events);
   await writeWorkspaceJsonFile(sessionDirectory, 'marks.json', marks);
   await writeWorkspaceJsonFile(sessionDirectory, 'bindings.json', bindings);

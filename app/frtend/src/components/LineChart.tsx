@@ -27,6 +27,7 @@ echarts.use([
 
 interface LineChartProps {
   data: number[];
+  xValues?: number[];
   label: string;
   unit: string;
   color?: string;
@@ -43,6 +44,7 @@ interface LineChartProps {
 
 interface TelemetryChartProps {
   data: number[];
+  xValues?: number[];
   label: string;
   unit: string;
   strokeColor: string;
@@ -116,8 +118,21 @@ function xToRatio(x: number, xMax: number): number {
   return clamp(x / xMax, 0, 1);
 }
 
-function valueAtRatio(data: number[], ratio: number): number {
+function valueAtRatio(data: number[], ratio: number, xValues?: number[], xMax?: number): number {
   if (data.length === 0) return 0;
+  if (xValues && xValues.length === data.length) {
+    const targetX = ratioToX(ratio, xMax ?? Math.max(1, xValues[xValues.length - 1] ?? 1));
+    let bestIndex = 0;
+    let bestDelta = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < xValues.length; i++) {
+      const delta = Math.abs((xValues[i] ?? 0) - targetX);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        bestIndex = i;
+      }
+    }
+    return data[bestIndex] ?? 0;
+  }
   return data[Math.round(clamp(ratio, 0, 1) * (data.length - 1))] ?? 0;
 }
 
@@ -130,7 +145,14 @@ function formatXLabel(x: number, totalLengthSeconds?: number): string {
 
 function shouldUseInlinePlayheadWindow(label: string): boolean {
   const normalized = label.trim().toLowerCase();
-  return normalized === 'speed' || normalized === 'sog' || normalized === 'turn rate';
+  return (
+    normalized === 'speed' ||
+    normalized === 'sog' ||
+    normalized === 'turn rate' ||
+    normalized === 'heel' ||
+    normalized.startsWith('acceleration') ||
+    normalized.startsWith('gyro')
+  );
 }
 
 function resolveInlineWindow(
@@ -206,6 +228,7 @@ function getPointRatioFromEvent(chart: ECharts, event: { offsetX: number; offset
 
 function buildChartOption({
   data,
+  xValues,
   label,
   unit,
   strokeColor,
@@ -222,8 +245,13 @@ function buildChartOption({
   const useSmoothedData = mode === 'inline' || detailSmoothingOn;
   const displayData = useSmoothedData ? smoothSeries(data, smoothing, totalLengthSeconds) : data;
   const xMax = getTimeMax(displayData.length, totalLengthSeconds);
+  const hasExplicitX = xValues?.length === displayData.length;
   const chartData: Array<[number, number]> = displayData.map((value, index) => {
-    const x = displayData.length > 1 ? (index / (displayData.length - 1)) * xMax : 0;
+    const x = hasExplicitX
+      ? xValues![index]!
+      : displayData.length > 1
+        ? (index / (displayData.length - 1)) * xMax
+        : 0;
     return [x, value];
   });
   const visibleWindow = resolveInlineWindow(label, mode, playheadRatio, xMax);
@@ -424,6 +452,7 @@ function buildChartOption({
 
 function TelemetryEChart({
   data,
+  xValues,
   label,
   unit,
   strokeColor,
@@ -454,6 +483,7 @@ function TelemetryEChart({
     () =>
       buildChartOption({
         data,
+        xValues,
         label,
         unit,
         strokeColor,
@@ -481,6 +511,7 @@ function TelemetryEChart({
       textColor,
       totalLengthSeconds,
       unit,
+      xValues,
     ],
   );
 
@@ -579,6 +610,7 @@ interface LineChartDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   data: number[];
+  xValues?: number[];
   label: string;
   unit: string;
   strokeColor: string;
@@ -596,10 +628,40 @@ interface LineChartDetailModalProps {
   gridColor: string;
 }
 
+const INLINE_MAX_CHART_POINTS = 1400;
+
+function downsampleSeriesForInline(
+  data: number[],
+  xValues: number[] | undefined,
+  maxPoints: number,
+): { data: number[]; xValues?: number[] } {
+  if (data.length <= maxPoints) {
+    return xValues ? { data, xValues } : { data };
+  }
+
+  const sampledData: number[] = [];
+  const sampledXValues: number[] | undefined = xValues ? [] : undefined;
+  const step = (data.length - 1) / (maxPoints - 1);
+  let lastIndex = -1;
+
+  for (let i = 0; i < maxPoints; i++) {
+    const index = Math.min(data.length - 1, Math.round(i * step));
+    if (index === lastIndex) continue;
+    sampledData.push(data[index] ?? 0);
+    if (sampledXValues && xValues) {
+      sampledXValues.push(xValues[index] ?? 0);
+    }
+    lastIndex = index;
+  }
+
+  return sampledXValues ? { data: sampledData, xValues: sampledXValues } : { data: sampledData };
+}
+
 function LineChartDetailModal({
   isOpen,
   onClose,
   data,
+  xValues,
   label,
   unit,
   strokeColor,
@@ -646,7 +708,12 @@ function LineChartDetailModal({
   const max = Math.max(...values);
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
   const cursorRatio = hoverRatio ?? playheadRatio;
-  const cursorValue = valueAtRatio(plotData, cursorRatio);
+  const cursorValue = valueAtRatio(
+    plotData,
+    cursorRatio,
+    xValues,
+    getTimeMax(data.length, totalLengthSeconds),
+  );
   const totalSec = totalLengthSeconds ?? 0;
 
   return createPortal(
@@ -731,6 +798,7 @@ function LineChartDetailModal({
           <TelemetryEChart
             key={chartResetKey}
             data={data}
+            xValues={xValues}
             label={label}
             unit={unit}
             strokeColor={strokeColor}
@@ -765,6 +833,7 @@ function LineChartDetailModal({
 
 export default function LineChart({
   data,
+  xValues,
   label,
   unit,
   color,
@@ -786,8 +855,17 @@ export default function LineChart({
     () => smoothSeries(data, smoothing, totalLengthSeconds),
     [data, smoothing, totalLengthSeconds],
   );
+  const inlineSeries = useMemo(
+    () => downsampleSeriesForInline(data, xValues, INLINE_MAX_CHART_POINTS),
+    [data, xValues],
+  );
   const activeRatio = hoverRatio ?? playheadRatio;
-  const activeValue = valueAtRatio(hoverRatio != null ? data : displayData, activeRatio);
+  const activeValue = valueAtRatio(
+    hoverRatio != null ? data : displayData,
+    activeRatio,
+    xValues,
+    getTimeMax(data.length, totalLengthSeconds),
+  );
 
   const handleOpenDetail = useCallback(() => {
     setDetailOpen(true);
@@ -814,7 +892,8 @@ export default function LineChart({
       </div>
 
       <TelemetryEChart
-        data={data}
+        data={inlineSeries.data}
+        xValues={inlineSeries.xValues}
         label={label}
         unit={unit}
         strokeColor={strokeColor}
@@ -837,6 +916,7 @@ export default function LineChart({
           isOpen={detailOpen}
           onClose={() => setDetailOpen(false)}
           data={data}
+          xValues={xValues}
           label={label}
           unit={unit}
           strokeColor={strokeColor}

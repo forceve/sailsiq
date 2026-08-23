@@ -1,5 +1,6 @@
 import type {
   SessionEvent,
+  TelemetryDataset,
   TrackPoint,
   VideoSyncBinding,
   VideoType,
@@ -34,7 +35,7 @@ export interface WorkspaceRangeSelection {
   trackId?: string;
   startMs: number;
   endMs: number;
-  source: 'speed' | 'heading' | 'vmgToWind' | 'turnRate';
+  source: string;
 }
 
 export interface WorkspaceSelectionState {
@@ -83,6 +84,7 @@ export interface WorkspaceSharedState {
   currentPoint?: TrackPoint;
   activeTrackId?: string | null;
   activeTrackPoints?: TrackPoint[];
+  telemetryDatasets?: TelemetryDataset[];
   windDir?: number;
   windSpeed?: number;
   nearestEvent?: SessionEvent | null;

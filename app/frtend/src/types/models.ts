@@ -200,6 +200,14 @@ export interface TrackStreamBundle {
   points: TrackPoint[];
 }
 
+export type {
+  TelemetryChannel,
+  TelemetryChannelGroup,
+  TelemetryDataset,
+  TelemetrySample,
+  TelemetrySegment,
+} from '../../../shared/telemetryImport';
+
 export type EventType =
   | 'general'
   | 'tack'
