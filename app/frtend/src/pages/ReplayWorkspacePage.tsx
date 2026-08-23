@@ -81,6 +81,7 @@ import type {
   Mark,
   SessionVideo,
   LocalSessionVideo,
+  TelemetryDataset,
   VideoSyncBinding,
   VideoType,
   WindInputSource,
@@ -101,8 +102,10 @@ import {
   getLocalWorkspaceSessionBundle,
   getLocalWorkspaceSessionBindings,
   getWorkspaceRelativeBindingPath,
+  importLocalWorkspaceTelemetryFile,
   listLocalWorkspaceVideoFiles,
   loadLocalWorkspaceVideoFile,
+  parseLocalTelemetryFile,
   saveLocalWorkspaceSession,
   saveLocalWorkspaceSessionEvents,
   saveLocalWorkspaceSessionVideoBindings,
@@ -514,6 +517,7 @@ function ReplayWorkspaceHostPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [tracks, setTracks] = useState<TrackStream[]>([]);
   const [trackPointsById, setTrackPointsById] = useState<Record<string, TrackPoint[]>>({});
+  const [telemetryDatasets, setTelemetryDatasets] = useState<TelemetryDataset[]>([]);
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [marks, setMarks] = useState<Mark[]>([]);
@@ -549,6 +553,7 @@ function ReplayWorkspaceHostPage() {
   const [videoDraftType, setVideoDraftType] = useState<VideoType>('flat');
   const [videoBusy, setVideoBusy] = useState(false);
   const [videoControlError, setVideoControlError] = useState<string | null>(null);
+  const [sensorImportMessage, setSensorImportMessage] = useState<string | null>(null);
   const [videoStageError, setVideoStageError] = useState<string | null>(null);
   const [videoStageReady, setVideoStageReady] = useState(false);
   const [videoDurationsByKey, setVideoDurationsByKey] = useState<Record<string, number>>({});
@@ -598,6 +603,7 @@ function ReplayWorkspaceHostPage() {
   const workspaceRef = useRef<HTMLElement | null>(null);
   const stageCanvasRef = useRef<HTMLElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const sensorInputRef = useRef<HTMLInputElement | null>(null);
   const topBarRef = useRef<HTMLDivElement | null>(null);
   const localVideoRef = useRef<LocalSessionVideo | null>(null);
   const localVideoObjectUrlRef = useRef<string | null>(null);
@@ -1079,6 +1085,7 @@ function ReplayWorkspaceHostPage() {
     setSession(null);
     setTracks([]);
     setTrackPointsById({});
+    setTelemetryDatasets([]);
     setActiveTrackId(null);
     setEvents([]);
     setMarks([]);
@@ -1099,6 +1106,7 @@ function ReplayWorkspaceHostPage() {
     setSyncSessionTimeMs(0);
     setSyncVideoTimeMs(0);
     setVideoControlError(null);
+    setSensorImportMessage(null);
     setManualWind(null);
 
     const load = async () => {
@@ -1113,6 +1121,7 @@ function ReplayWorkspaceHostPage() {
               nextSession: localBundle.session,
               nextTracks: localBundle.tracks,
               nextTrackPointsById: localBundle.trackPointsById,
+              nextTelemetryDatasets: localBundle.telemetryDatasets,
               nextEvents: localBundle.events,
               nextMarks: localBundle.marks,
               nextVideos: [] as SessionVideo[],
@@ -1158,6 +1167,7 @@ function ReplayWorkspaceHostPage() {
         nextSession,
         nextTracks,
         nextTrackPointsById,
+        nextTelemetryDatasets: [] as TelemetryDataset[],
         nextEvents,
         nextMarks,
         nextVideos,
@@ -1165,7 +1175,15 @@ function ReplayWorkspaceHostPage() {
     };
 
     void load()
-      .then(({ nextSession, nextTracks, nextTrackPointsById, nextEvents, nextMarks, nextVideos }) => {
+      .then(({
+        nextSession,
+        nextTracks,
+        nextTrackPointsById,
+        nextTelemetryDatasets,
+        nextEvents,
+        nextMarks,
+        nextVideos,
+      }) => {
         if (cancelled) return;
         setSession(nextSession);
         setManualWind(
@@ -1178,6 +1196,7 @@ function ReplayWorkspaceHostPage() {
         );
         setTracks(nextTracks);
         setTrackPointsById(nextTrackPointsById);
+        setTelemetryDatasets(nextTelemetryDatasets);
         setActiveTrackId(getPrimaryTrackId(nextTracks));
         setEvents(nextEvents);
         setMarks(nextMarks);
@@ -1195,6 +1214,7 @@ function ReplayWorkspaceHostPage() {
           setSession(null);
           setTracks([]);
           setTrackPointsById({});
+          setTelemetryDatasets([]);
           setActiveTrackId(null);
           setEvents([]);
           setMarks([]);
@@ -2531,6 +2551,45 @@ function ReplayWorkspaceHostPage() {
     fileInputRef.current?.click();
   }, []);
 
+  const handleSensorTelemetryFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0 || !sessionId) return;
+      const selectedFiles = Array.from(files);
+      setVideoControlError(null);
+      setSensorImportMessage(null);
+
+      try {
+        const parsed = await Promise.all(
+          selectedFiles.map((file) =>
+            currentWorkspace
+              ? importLocalWorkspaceTelemetryFile(currentWorkspace.id, sessionId, file)
+              : parseLocalTelemetryFile(file, { sessionId }),
+          ),
+        );
+        const nextDatasets = parsed.map((item) => item.dataset);
+        setTelemetryDatasets((prev) => {
+          const nextIds = new Set(nextDatasets.map((dataset) => dataset.id));
+          return [
+            ...prev.filter((dataset) => !nextIds.has(dataset.id)),
+            ...nextDatasets,
+          ];
+        });
+        const channelCount = nextDatasets.reduce(
+          (sum, dataset) => sum + dataset.channels.length,
+          0,
+        );
+        setSensorImportMessage(
+          `Imported ${nextDatasets.length} sensor source${
+            nextDatasets.length === 1 ? '' : 's'
+          } with ${channelCount} channel${channelCount === 1 ? '' : 's'}.`,
+        );
+      } catch (error) {
+        setVideoControlError(getErrorMessage(error));
+      }
+    },
+    [currentWorkspace, sessionId],
+  );
+
   const handleOpenCompanionWindow = useCallback(() => {
     if (!sessionId) return;
 
@@ -2786,6 +2845,9 @@ function ReplayWorkspaceHostPage() {
         includeVmgToWind
         windDir={manualWind?.dir}
         headingColor={themeId === 'cyber' ? '#22c55e' : undefined}
+        telemetryDatasets={telemetryDatasets}
+        telemetryWindow={workspaceWindowEffective}
+        telemetryTimeOriginMs={workspaceWindowEffective.startMs}
       />
     ),
     [
@@ -2794,9 +2856,11 @@ function ReplayWorkspaceHostPage() {
       handleChartSeek,
       handleRangeSelection,
       manualWind?.dir,
+      telemetryDatasets,
       telemetryWorkspace,
       themeId,
       workspaceDurationMs,
+      workspaceWindowEffective,
     ],
   );
 
@@ -3244,6 +3308,20 @@ function ReplayWorkspaceHostPage() {
                 <Film className="h-4 w-4" />
                 <span>Screen 2</span>
               </button>
+              <button
+                type="button"
+                onClick={() => sensorInputRef.current?.click()}
+                className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full border ${s.divider} px-2.5 py-1.5 text-sm ${s.textPrimary} transition-colors hover:bg-current/5`}
+                title="Import sensor telemetry"
+              >
+                <Activity className="h-4 w-4" />
+                <span>Sensor</span>
+                {telemetryDatasets.length > 0 ? (
+                  <span className={`ml-0.5 rounded-full px-1.5 py-0.5 text-[10px] ${s.buttonSecondary}`}>
+                    {telemetryDatasets.length}
+                  </span>
+                ) : null}
+              </button>
 
               <div className="ml-auto flex min-w-0 shrink items-center gap-2">
                 {showTopBarSessionTabs ? (
@@ -3302,6 +3380,17 @@ function ReplayWorkspaceHostPage() {
                     if (file) {
                       void handleSelectLocalVideo(file);
                     }
+                    event.currentTarget.value = '';
+                  }}
+                />
+                <input
+                  ref={sensorInputRef}
+                  type="file"
+                  accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => {
+                    void handleSensorTelemetryFiles(event.currentTarget.files);
                     event.currentTarget.value = '';
                   }}
                 />
@@ -3710,6 +3799,12 @@ function ReplayWorkspaceHostPage() {
                 ) : null}
               </div>
 
+              {sensorImportMessage ? (
+                <div className={`mb-3 rounded-2xl border ${s.divider} px-4 py-3 text-xs ${s.textSecondary}`}>
+                  {sensorImportMessage}
+                </div>
+              ) : null}
+
               <WorkspaceTelemetryStage
                 telemetry={telemetryWorkspace}
                 totalDurationMs={workspaceDurationMs}
@@ -3722,6 +3817,9 @@ function ReplayWorkspaceHostPage() {
                 includeVmgToWind
                 windDir={manualWind?.dir}
                 headingColor={themeId === 'cyber' ? '#22c55e' : undefined}
+                telemetryDatasets={telemetryDatasets}
+                telemetryWindow={workspaceWindowEffective}
+                telemetryTimeOriginMs={workspaceWindowEffective.startMs}
               />
             </div>
           </div>

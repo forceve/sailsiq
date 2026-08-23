@@ -92,7 +92,9 @@ function findText(el: Element, names: string[]): string | null {
 function parseNumber(value: unknown): number | undefined {
   if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
   if (typeof value !== 'string') return undefined;
-  const num = Number(value.trim());
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const num = Number(trimmed);
   return Number.isFinite(num) ? num : undefined;
 }
 
@@ -105,6 +107,35 @@ function parseTimestampValue(value: unknown): number | undefined {
   if (Number.isFinite(asNumber)) return asNumber;
   const ts = Date.parse(trimmed);
   return Number.isFinite(ts) ? ts : undefined;
+}
+
+function parseDelimitedTimestampValue(
+  timeValue: unknown,
+  dateValue: unknown,
+): number | undefined {
+  const parsedTime = parseTimestampValue(timeValue);
+  if (parsedTime != null) return parsedTime;
+
+  if (typeof dateValue !== 'string' || typeof timeValue !== 'string') {
+    return undefined;
+  }
+
+  const date = dateValue.trim();
+  const time = timeValue.trim();
+  if (!date || !time) return undefined;
+
+  const ts = Date.parse(`${date}T${time}`);
+  return Number.isFinite(ts) ? ts : undefined;
+}
+
+function convertSpeedToKnots(value: number | undefined, unit: 'knots' | 'kph'): number | undefined {
+  if (value == null) return undefined;
+  return unit === 'kph' ? value / 1.852 : value;
+}
+
+function isPlausibleWallClockUnixMs(value: number | undefined): value is number {
+  if (value == null || !Number.isFinite(value)) return false;
+  return value >= Date.UTC(2000, 0, 1) && value <= Date.UTC(2100, 0, 1);
 }
 
 function basename(fileName: string): string {
@@ -123,6 +154,7 @@ function normalizeTimestampSeries(values: number[]): {
   synthesizedTime: boolean;
   date?: string;
   originUnixMs: number;
+  reliableOriginUnixMs?: number;
 } {
   if (values.length === 0) {
     return { normalized: [], synthesizedTime: false, originUnixMs: 0 };
@@ -158,13 +190,23 @@ function normalizeTimestampSeries(values: number[]): {
   });
 
   const origin = normalizedAbs[0]!;
+  const scaledFirst = Math.round(first * scale);
+  const reliableOriginUnixMs = isPlausibleWallClockUnixMs(scaledFirst)
+    ? scaledFirst
+    : undefined;
   const normalized = normalizedAbs.map((value) => value - origin);
-  const startedAt = new Date(origin);
+  const startedAt = new Date(reliableOriginUnixMs ?? origin);
   const date = Number.isNaN(startedAt.getTime())
     ? undefined
     : startedAt.toISOString().slice(0, 10);
 
-  return { normalized, synthesizedTime, date, originUnixMs: origin };
+  return {
+    normalized,
+    synthesizedTime,
+    date,
+    originUnixMs: origin,
+    ...(reliableOriginUnixMs != null ? { reliableOriginUnixMs } : {}),
+  };
 }
 
 function hasUbxChecksum(
@@ -303,10 +345,10 @@ function finalizePoints(
   const location = `${points[0]!.lat.toFixed(4)}, ${points[0]!.lon.toFixed(4)}`;
 
   const trackTimeOriginUnixMs =
+    rawPoints[0]?.t != null &&
     options.hadSourceTime &&
-    !timeInfo.synthesizedTime &&
-    Number.isFinite(timeInfo.originUnixMs)
-      ? timeInfo.originUnixMs
+    timeInfo.reliableOriginUnixMs != null
+      ? timeInfo.reliableOriginUnixMs
       : undefined;
 
   return {
@@ -597,13 +639,45 @@ function parseDelimitedBin(text: string): ParsedImportTrack {
     lines[0]!.includes(candidate),
   ) ?? ',';
   const headers = lines[0]!.split(delimiter).map((value) => value.trim().toLowerCase());
-  const indexOfAny = (names: string[]) => headers.findIndex((header) => names.includes(header));
+  const indexOfAny = (names: string[]) => {
+    for (const name of names) {
+      const index = headers.indexOf(name);
+      if (index >= 0) return index;
+    }
+    return -1;
+  };
 
   const timeIndex = indexOfAny(['t', 'time', 'timestamp', 'ts']);
+  const dateIndex = indexOfAny(['date', 'day']);
   const latIndex = indexOfAny(['lat', 'latitude']);
   const lonIndex = indexOfAny(['lon', 'lng', 'longitude']);
-  const speedIndex = indexOfAny(['s', 'speed', 'sog']);
-  const headingIndex = indexOfAny(['h', 'heading', 'cog', 'course']);
+  const speedIndex = indexOfAny([
+    's',
+    'speed',
+    'sog',
+    'sog_kts',
+    'speed_kts',
+    'speed_knots',
+    'speed_kph',
+    'speed_kmh',
+    'sog_kph',
+    'sog_kmh',
+  ]);
+  const speedUnit: 'knots' | 'kph' =
+    speedIndex >= 0 && /(?:^|_)k(?:p)?h$|kmh$/.test(headers[speedIndex]!)
+      ? 'kph'
+      : 'knots';
+  const headingIndex = indexOfAny([
+    'h',
+    'heading',
+    'hdg',
+    'hdg_true',
+    'heading_true',
+    'true_heading',
+    'cog',
+    'course',
+    'course_deg',
+  ]);
   const windSpeedIndex = indexOfAny(['w_s', 'ws', 'windspeed']);
   const windDirIndex = indexOfAny(['w_d', 'wd', 'winddirection']);
 
@@ -611,30 +685,52 @@ function parseDelimitedBin(text: string): ParsedImportTrack {
     throw new Error('The .bin text export is missing lat/lon columns.');
   }
 
-  const points = lines.slice(1).map((line, rowIndex) => {
+  let skippedMissingFixRows = 0;
+  let sourceDate: string | undefined;
+  const points = lines.slice(1).flatMap((line, rowIndex) => {
     const values = line.split(delimiter).map((value) => value.trim());
     const lat = parseNumber(values[latIndex]);
     const lon = parseNumber(values[lonIndex]);
     if (lat == null || lon == null) {
+      if (lat == null && lon == null) {
+        skippedMissingFixRows += 1;
+        return [];
+      }
       throw new Error(`Row ${rowIndex + 2} is missing a valid lat/lon.`);
     }
-    return {
-      t: timeIndex >= 0 ? parseTimestampValue(values[timeIndex]) : undefined,
+    if (dateIndex >= 0 && sourceDate == null && values[dateIndex]) {
+      sourceDate = values[dateIndex];
+    }
+    return [{
+      t: timeIndex >= 0
+        ? parseDelimitedTimestampValue(values[timeIndex], dateIndex >= 0 ? values[dateIndex] : undefined)
+        : undefined,
       lat,
       lon,
-      s: speedIndex >= 0 ? parseNumber(values[speedIndex]) : undefined,
+      s: speedIndex >= 0
+        ? convertSpeedToKnots(parseNumber(values[speedIndex]), speedUnit)
+        : undefined,
       h: headingIndex >= 0 ? parseNumber(values[headingIndex]) : undefined,
       w_s: windSpeedIndex >= 0 ? parseNumber(values[windSpeedIndex]) : undefined,
       w_d: windDirIndex >= 0 ? parseNumber(values[windDirIndex]) : undefined,
-    };
+    }];
   });
 
-  return finalizePoints(points, {
+  const parsed = finalizePoints(points, {
     hadSourceTime: timeIndex >= 0,
     hadSourceSpeed: speedIndex >= 0,
     hadSourceHeading: headingIndex >= 0,
     hadSourceWind: windSpeedIndex >= 0 || windDirIndex >= 0,
   });
+  if (skippedMissingFixRows > 0) {
+    parsed.preview.warnings.unshift(
+      `Skipped ${skippedMissingFixRows} rows without a usable GPS fix.`,
+    );
+  }
+  if (sourceDate != null) {
+    parsed.preview.date = sourceDate;
+  }
+  return parsed;
 }
 
 function parseJsonBin(text: string): ParsedImportTrack {
@@ -673,8 +769,19 @@ function parseJsonBin(text: string): ParsedImportTrack {
       throw new Error(`Point ${index + 1} is missing a valid lat/lon.`);
     }
     const t = parseTimestampValue(record.t ?? record.time ?? record.timestamp ?? record.ts);
-    const s = parseNumber(record.s ?? record.speed ?? record.sog);
-    const h = parseNumber(record.h ?? record.heading ?? record.cog ?? record.course);
+    const s = parseNumber(
+      record.s ?? record.speed ?? record.sog ?? record.sog_kts ?? record.speed_kts,
+    );
+    const h = parseNumber(
+      record.h ??
+        record.heading ??
+        record.hdg ??
+        record.hdg_true ??
+        record.heading_true ??
+        record.true_heading ??
+        record.cog ??
+        record.course,
+    );
     const w_s = parseNumber(record.w_s ?? record.ws ?? record.windSpeed ?? record.windspeed);
     const w_d = parseNumber(record.w_d ?? record.wd ?? record.windDirection ?? record.winddirection);
 
@@ -870,11 +977,11 @@ export function parseImportBytes(
     return parseUbx(normalizedBytes);
   }
 
-  if (ext === 'bin') {
+  if (ext === 'bin' || ext === 'csv' || ext === 'tsv' || ext === 'txt') {
     return parseBin(normalizedBytes);
   }
 
-  throw new Error('Only GPX, UBX, and SailSIQ .bin imports are supported right now.');
+  throw new Error('Only GPX, UBX, CSV, TSV, TXT, and SailSIQ .bin imports are supported right now.');
 }
 
 export function getSessionNameFromImportFile(fileName: string): string {

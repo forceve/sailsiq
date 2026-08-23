@@ -1,12 +1,13 @@
 import LineChart from '@/components/LineChart';
 
-export type TelemetrySeriesSource = 'speed' | 'heading' | 'vmgToWind' | 'turnRate';
+export type TelemetrySeriesSource = string;
 
 export interface TelemetrySeries {
   source: TelemetrySeriesSource;
   label: string;
   unit: string;
   data: number[];
+  xValues?: number[];
   color?: string;
 }
 
@@ -45,6 +46,7 @@ export default function AdaptiveTelemetryPanel({
           <LineChart
             key={item.source}
             data={item.data}
+            xValues={item.xValues}
             label={item.label}
             unit={item.unit}
             color={item.color}
