@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Wind,
   Map as MapIcon,
@@ -56,6 +56,7 @@ interface MapCanvasProps {
   } | null;
   focusedMarkId?: string | null;
   overlay?: ReactNode;
+  presentation?: boolean;
 }
 
 type MapViewMode = 'overview' | 'follow' | 'lead';
@@ -65,6 +66,75 @@ interface LayerVisibility {
   showMarks: boolean;
   showScale: boolean;
   showCoords: boolean;
+}
+
+const ROUTE_CHUNK_SIZE = 512;
+
+interface RouteRenderData {
+  positions: LatLngExpression[];
+  chunks: LatLngExpression[][];
+}
+
+const fullRouteRenderDataCache = new WeakMap<TrackPoint[], RouteRenderData>();
+const telemetryBoundsCache = new WeakMap<TrackPoint[], L.LatLngBounds>();
+
+function chunkPositions(positions: LatLngExpression[], chunkSize: number): LatLngExpression[][] {
+  if (positions.length < 2) return [];
+
+  const chunks: LatLngExpression[][] = [];
+  for (let start = 0; start < positions.length - 1; start += chunkSize) {
+    const end = Math.min(positions.length, start + chunkSize + 1);
+    chunks.push(positions.slice(start, end));
+  }
+
+  return chunks;
+}
+
+function buildRouteRenderData(telemetry: TrackPoint[]): RouteRenderData {
+  const cached = fullRouteRenderDataCache.get(telemetry);
+  if (cached) return cached;
+
+  const positions = telemetry.map((point) => [point.lat, point.lon] as LatLngExpression);
+  const data = {
+    positions,
+    chunks: chunkPositions(positions, ROUTE_CHUNK_SIZE),
+  };
+  fullRouteRenderDataCache.set(telemetry, data);
+  return data;
+}
+
+function buildTelemetryBounds(telemetry: TrackPoint[]): L.LatLngBounds | null {
+  if (telemetry.length === 0) return null;
+  const cached = telemetryBoundsCache.get(telemetry);
+  if (cached) return cached;
+
+  const bounds = L.latLngBounds(
+    telemetry.map((point) => [point.lat, point.lon] as LatLngExpression),
+  );
+  if (bounds.isValid()) {
+    telemetryBoundsCache.set(telemetry, bounds);
+    return bounds;
+  }
+  return null;
+}
+
+function getViewportBounds(
+  telemetry: TrackPoint[],
+  marks: CourseMark[],
+): L.LatLngBounds | null {
+  const trackBounds = buildTelemetryBounds(telemetry);
+  const bounds = trackBounds ? L.latLngBounds(trackBounds.getSouthWest(), trackBounds.getNorthEast()) : null;
+
+  for (const mark of marks) {
+    if (bounds) {
+      bounds.extend([mark.lat, mark.lon]);
+    }
+  }
+
+  if (bounds) return bounds.isValid() ? bounds : null;
+  if (marks.length === 0) return null;
+  const markBounds = L.latLngBounds(marks.map((mark) => [mark.lat, mark.lon] as LatLngExpression));
+  return markBounds.isValid() ? markBounds : null;
 }
 
 
@@ -96,17 +166,8 @@ const InitialViewport = memo(function InitialViewport({
   useEffect(() => {
     if (mapViewMode !== 'overview') return;
 
-    const points: LatLngExpression[] = [
-      ...telemetry.map((point) => [point.lat, point.lon] as LatLngExpression),
-      ...marks.map((mark) => [mark.lat, mark.lon] as LatLngExpression),
-    ];
-
-    if (points.length === 0) {
-      return;
-    }
-
-    const bounds = L.latLngBounds(points);
-    if (bounds.isValid()) {
+    const bounds = getViewportBounds(telemetry, marks);
+    if (bounds?.isValid()) {
       map.fitBounds(bounds.pad(0.15), { animate: false });
     }
   }, [map, mapViewMode, viewportKey, telemetry, marks]);
@@ -181,16 +242,26 @@ const ScaleControl = memo(function ScaleControl({
   enabled: boolean;
 }) {
   const map = useMap();
+  const { s } = useTheme();
 
   useEffect(() => {
     if (!enabled) return;
 
     const control = L.control.scale({ imperial: false, position: 'bottomleft' });
     control.addTo(map);
+    const container = control.getContainer();
+    if (container) {
+      container.className = `${container.className} ${s.textPrimary}`;
+      container.querySelectorAll<HTMLElement>('.leaflet-control-scale-line').forEach((line) => {
+        line.className = `${line.className} ${s.panel} ${s.textPrimary}`;
+        line.style.background = 'transparent';
+        line.style.borderTop = 'none';
+      });
+    }
     return () => {
       control.remove();
     };
-  }, [enabled, map]);
+  }, [enabled, map, s.panel, s.textPrimary]);
 
   return null;
 });
@@ -209,6 +280,7 @@ const CoordinatesControl = memo(function CoordinatesControl({
   point?: TrackPoint;
 }) {
   const map = useMap();
+  const { s } = useTheme();
 
   useEffect(() => {
     if (!enabled) return;
@@ -218,12 +290,11 @@ const CoordinatesControl = memo(function CoordinatesControl({
 
     control.onAdd = () => {
       const container = L.DomUtil.create('div', 'leaflet-bar');
-      container.style.background = 'rgba(15, 23, 42, 0.78)';
-      container.style.color = '#f8fafc';
       container.style.padding = '4px 8px';
       container.style.fontSize = '11px';
       container.style.lineHeight = '1.4';
       container.style.minWidth = '148px';
+      container.className = `leaflet-bar ${s.panel} ${s.textPrimary}`;
       container.textContent = initialText;
       L.DomEvent.disableClickPropagation(container);
       return container;
@@ -254,70 +325,110 @@ const CoordinatesControl = memo(function CoordinatesControl({
       map.off('mouseout', handleLeave);
       control.remove();
     };
-  }, [enabled, map, point]);
+  }, [enabled, map, point, s.panel, s.textPrimary]);
 
   return null;
 });
 
+const WindReferenceOverlay = memo(function WindReferenceOverlay({
+  windDir,
+  colorClass,
+}: {
+  windDir?: number | null;
+  colorClass: string;
+}) {
+  if (windDir == null || !Number.isFinite(windDir)) return null;
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-[900] overflow-hidden">
+      <div
+        className={`absolute left-1/2 top-1/2 h-[160vmax] w-px origin-center -translate-x-1/2 -translate-y-1/2 ${colorClass}`}
+        style={{
+          transform: `translate(-50%, -50%) rotate(${windDir}deg)`,
+          backgroundImage: 'repeating-linear-gradient(to bottom, currentColor 0 8px, transparent 8px 16px)',
+          opacity: 0.86,
+        }}
+      />
+    </div>
+  );
+});
+
 
 const RouteBaseLayer = memo(function RouteBaseLayer({
-  telemetry,
+  chunks,
   color,
 }: {
-  telemetry: TrackPoint[];
+  chunks: LatLngExpression[][];
   color: string;
 }) {
-  const positions = useMemo<LatLngExpression[]>(
-    () => telemetry.map((point) => [point.lat, point.lon]),
-    [telemetry],
-  );
-
-  if (positions.length < 2) return null;
+  if (chunks.length === 0) return null;
 
   return (
     <Pane name="route-base" style={{ zIndex: 420 }}>
-      <Polyline
-        positions={positions}
-        pathOptions={{
-          color,
-          opacity: 0.22,
-          weight: 0.6,
-          lineCap: 'round',
-          lineJoin: 'round',
-        }}
-      />
+      {chunks.map((positions, index) => (
+        <Polyline
+          key={index}
+          positions={positions}
+          pathOptions={{
+            color,
+            opacity: 0.22,
+            weight: 0.6,
+            lineCap: 'round',
+            lineJoin: 'round',
+          }}
+        />
+      ))}
     </Pane>
   );
 });
 
 const RouteProgressLayer = memo(function RouteProgressLayer({
-  telemetry,
+  chunks,
   playheadIndex,
   color,
 }: {
-  telemetry: TrackPoint[];
+  chunks: LatLngExpression[][];
   playheadIndex: number;
   color: string;
 }) {
-  const positions = useMemo<LatLngExpression[]>(() => {
-    const visibleCount = Math.max(1, Math.min(playheadIndex + 1, telemetry.length));
-    return telemetry.slice(0, visibleCount).map((point) => [point.lat, point.lon]);
-  }, [telemetry, playheadIndex]);
+  const visibleChunkCount = Math.max(0, Math.floor(playheadIndex / ROUTE_CHUNK_SIZE));
+  const activeChunkIndex = visibleChunkCount;
+  const activeChunkPointCount = (playheadIndex % ROUTE_CHUNK_SIZE) + 1;
+  const activeChunk = chunks[activeChunkIndex];
+  const activePositions = useMemo(
+    () => (activeChunk ? activeChunk.slice(0, activeChunkPointCount + 1) : []),
+    [activeChunk, activeChunkPointCount],
+  );
 
-  if (positions.length < 2) return null;
+  if (chunks.length === 0) return null;
 
   return (
     <Pane name="route-progress" style={{ zIndex: 430 }}>
-      <Polyline
-        positions={positions}
-        pathOptions={{
-          color,
-          opacity: 0.95,
-          weight: 0.75,
-          lineCap: 'round',
-          lineJoin: 'round',
-        }}
-      />
+      {chunks.slice(0, visibleChunkCount).map((positions, index) => (
+        <Polyline
+          key={index}
+          positions={positions}
+          pathOptions={{
+            color,
+            opacity: 0.95,
+            weight: 0.75,
+            lineCap: 'round',
+            lineJoin: 'round',
+          }}
+        />
+      ))}
+      {activePositions.length >= 2 ? (
+        <Polyline
+          positions={activePositions}
+          pathOptions={{
+            color,
+            opacity: 0.95,
+            weight: 0.75,
+            lineCap: 'round',
+            lineJoin: 'round',
+          }}
+        />
+      ) : null}
     </Pane>
   );
 });
@@ -464,12 +575,14 @@ export default function MapCanvas({
   routeClipRange,
   focusedMarkId,
   overlay,
+  presentation = false,
 }: MapCanvasProps) {
   const { s, themeId } = useTheme();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [localWindDir, setLocalWindDir] = useState(windDir ?? 0);
   const [localWindSpeed, setLocalWindSpeed] = useState(windSpeed ?? 0);
   const [windInputOpen, setWindInputOpen] = useState(false);
+  const [windReferenceDir, setWindReferenceDir] = useState<number | null>(null);
   const [mapViewMode, setMapViewMode] = useState<MapViewMode>('overview');
   const [layerPanelOpen, setLayerPanelOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -512,6 +625,22 @@ export default function MapCanvas({
     return telemetry.slice(normalizedClip.startIndex, normalizedClip.endIndex + 1);
   }, [normalizedClip, telemetry]);
 
+  const routeRenderData = useMemo(
+    () =>
+      normalizedClip
+        ? (() => {
+            const positions = routeTelemetry.map(
+              (point) => [point.lat, point.lon] as LatLngExpression,
+            );
+            return {
+              positions,
+              chunks: chunkPositions(positions, ROUTE_CHUNK_SIZE),
+            };
+          })()
+        : buildRouteRenderData(routeTelemetry),
+    [normalizedClip, routeTelemetry],
+  );
+
   const routePlayheadIndex = useMemo(() => {
     if (!normalizedClip || routeTelemetry.length === 0) return playheadIndex;
     const clamped = Math.max(
@@ -536,19 +665,13 @@ export default function MapCanvas({
 
   const displayWindDir = windDir ?? localWindDir;
   const displayWindSpeed = windSpeed ?? localWindSpeed;
+  const handleWindPreviewChange = useCallback((dir: number, _speed: number, active: boolean) => {
+    setWindReferenceDir(active ? dir : null);
+  }, []);
 
-  const isCyber = themeId === 'cyber';
-  const isVintage = themeId === 'vintage';
-  const isRound = themeId === 'nordic' || themeId === 'frost' || themeId === 'neumorph';
   const isDark = themeId === 'glass' || themeId === 'cyber';
-  const toolbarClass =
-    isVintage
-      ? 'bg-[#F4eedc]/80 border border-[#8b7355]/30 rounded-sm'
-      : isCyber
-        ? 'bg-black/80 border border-green-500/30 rounded-none'
-        : isRound
-          ? 'bg-white/50 border border-white/60 shadow-sm rounded-xl'
-          : 'bg-white/10 border border-white/10';
+  const toolbarClass = `${s.panel} ${s.textPrimary}`;
+  const mapToolButtonClass = `p-2 transition-opacity hover:opacity-70 ${s.textPrimary}`;
   const boatColor = isDark ? '#ffffff' : '#1c1917';
   const viewModeLabel =
     mapViewMode === 'overview' ? 'Overview' : mapViewMode === 'follow' ? 'Follow' : 'Lead';
@@ -569,6 +692,7 @@ export default function MapCanvas({
       ref={containerRef}
       className={`flex h-full min-h-0 w-full flex-1 flex-col ${s.mapBg} relative overflow-hidden rounded-none border-0 shadow-none`}
     >
+      {!presentation ? (
       <div
         className={`absolute top-4 left-4 ${MAP_CONTROL_LAYER_CLASS} pointer-events-auto flex flex-col gap-2 p-2 backdrop-blur-md ${toolbarClass}`}
       >
@@ -577,7 +701,7 @@ export default function MapCanvas({
             onClick={() =>
               onMapLayerChange(mapLayer === 'vector' ? 'satellite' : mapLayer === 'satellite' ? 'gray' : 'vector')
             }
-            className="p-2 hover:opacity-70 transition-opacity"
+            className={mapToolButtonClass}
             title={
               mapLayer === 'vector'
                 ? 'Switch to satellite'
@@ -592,7 +716,7 @@ export default function MapCanvas({
         {onAddMark && (
           <button
             onClick={onAddMark}
-            className="p-2 hover:opacity-70 transition-opacity"
+            className={mapToolButtonClass}
             title="Add Mark"
           >
             <MapPin className="w-5 h-5" />
@@ -601,7 +725,7 @@ export default function MapCanvas({
         {onSnapshot && (
           <button
             onClick={onSnapshot}
-            className="p-2 hover:opacity-70 transition-opacity"
+            className={mapToolButtonClass}
             title="Snapshot"
           >
             <Camera className="w-5 h-5" />
@@ -610,7 +734,7 @@ export default function MapCanvas({
         {onAddEvent && (
           <button
             onClick={onAddEvent}
-            className="p-2 hover:opacity-70 transition-opacity"
+            className={mapToolButtonClass}
             title="Add Event"
           >
             <Flag className="w-5 h-5" />
@@ -623,7 +747,7 @@ export default function MapCanvas({
               mode === 'overview' ? 'follow' : mode === 'follow' ? 'lead' : 'overview',
             )
           }
-          className={`p-2 transition-opacity ${mapViewMode !== 'overview' ? s.accent : ''} hover:opacity-70`}
+          className={`p-2 transition-opacity ${mapViewMode !== 'overview' ? s.accent : s.textPrimary} hover:opacity-70`}
           title={`Switch camera mode (${viewModeLabel})`}
         >
           <LocateFixed className="w-5 h-5" />
@@ -631,7 +755,7 @@ export default function MapCanvas({
         <button
           type="button"
           onClick={() => setLayerPanelOpen((open) => !open)}
-          className={`p-2 transition-opacity ${layerPanelOpen ? s.accent : ''} hover:opacity-70`}
+          className={`p-2 transition-opacity ${layerPanelOpen ? s.accent : s.textPrimary} hover:opacity-70`}
           title="Layers"
         >
           <Layers3 className="w-5 h-5" />
@@ -646,14 +770,15 @@ export default function MapCanvas({
             }
             void containerRef.current.requestFullscreen();
           }}
-          className={`p-2 transition-opacity ${isFullscreen ? s.accent : ''} hover:opacity-70`}
+          className={`p-2 transition-opacity ${isFullscreen ? s.accent : s.textPrimary} hover:opacity-70`}
           title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
         >
           <Maximize className="w-5 h-5" />
         </button>
       </div>
+      ) : null}
 
-      {layerPanelOpen && (
+      {layerPanelOpen && !presentation && (
         <div className={`absolute top-4 left-20 ${MAP_CONTROL_LAYER_CLASS} min-w-[220px] p-3 backdrop-blur-md ${toolbarClass}`}>
           <div className={`text-xs font-semibold uppercase tracking-[0.18em] ${s.textSecondary}`}>Layers</div>
           <div className="mt-3 flex flex-col gap-3">
@@ -720,14 +845,17 @@ export default function MapCanvas({
         </div>
       )}
 
-      <WindWidget
-        windDir={displayWindDir}
-        windSpeed={displayWindSpeed}
-        onWindChange={onWindChange}
-        toolbarClass={toolbarClass}
-      />
+      {!presentation ? (
+        <WindWidget
+          windDir={displayWindDir}
+          windSpeed={displayWindSpeed}
+          onWindChange={onWindChange}
+          onWindPreviewChange={handleWindPreviewChange}
+          toolbarClass={toolbarClass}
+        />
+      ) : null}
 
-      <div className="flex-1 w-full h-full min-h-[420px] overflow-hidden rounded-none lg:min-h-0">
+      <div className={`relative flex-1 w-full h-full overflow-hidden rounded-none ${presentation ? 'min-h-0' : 'min-h-[420px] lg:min-h-0'}`}>
         <MapContainer
           center={[0, 0]}
           zoom={2}
@@ -735,9 +863,16 @@ export default function MapCanvas({
           preferCanvas
           zoomControl={false}
           zoomAnimation={false}
+          dragging={!presentation}
+          scrollWheelZoom={!presentation}
+          doubleClickZoom={!presentation}
+          touchZoom={!presentation}
+          boxZoom={!presentation}
+          keyboard={!presentation}
+          attributionControl={!presentation}
         >
           <ResizeSync viewportKey={viewportKey} />
-          <ZoomControls />
+          {!presentation ? <ZoomControls /> : null}
           <InitialViewport
             telemetry={telemetry}
             marks={marks}
@@ -745,10 +880,10 @@ export default function MapCanvas({
             viewportKey={viewportKey}
           />
           <FollowViewport mapViewMode={mapViewMode} point={currentPoint} />
-          <ScaleControl enabled={layers.showScale} />
-          <CoordinatesControl enabled={layers.showCoords} point={currentPoint} />
+          <ScaleControl enabled={!presentation && layers.showScale} />
+          <CoordinatesControl enabled={!presentation && layers.showCoords} point={currentPoint} />
           <BaseTileLayer mapLayer={mapLayer} />
-          {layers.showRoute && <RouteBaseLayer telemetry={routeTelemetry} color={s.routeColor} />}
+          {layers.showRoute && <RouteBaseLayer chunks={routeRenderData.chunks} color={s.routeColor} />}
           {layers.showRoute && (
             <RouteHighlightLayer
               telemetry={telemetry}
@@ -760,7 +895,7 @@ export default function MapCanvas({
           )}
           {layers.showRoute && (
             <RouteProgressLayer
-              telemetry={routeTelemetry}
+              chunks={routeRenderData.chunks}
               playheadIndex={routePlayheadIndex}
               color={s.routeColor}
             />
@@ -780,7 +915,7 @@ export default function MapCanvas({
                 position={[currentPoint.lat, currentPoint.lon]}
                 icon={L.divIcon({
                   className: 'sailsiq-lead-indicator',
-                  html: `<div style="width:28px;height:28px;border:1px solid rgba(255,255,255,0.8);border-radius:999px;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.3);"><div style="transform:rotate(${getHeading(currentPoint)}deg);color:#fff;">▲</div></div>`,
+                  html: `<div style="width:28px;height:28px;border:1px solid ${isDark ? 'rgba(255,255,255,0.8)' : 'rgba(15,23,42,0.35)'};border-radius:999px;display:flex;align-items:center;justify-content:center;background:${isDark ? 'rgba(15,23,42,0.3)' : 'rgba(255,255,255,0.72)'};"><div style="transform:rotate(${getHeading(currentPoint)}deg);color:${isDark ? '#fff' : '#0f172a'};">▲</div></div>`,
                   iconSize: [28, 28],
                   iconAnchor: [14, 14],
                 })}
@@ -796,6 +931,10 @@ export default function MapCanvas({
             </Pane>
           )}
         </MapContainer>
+        <WindReferenceOverlay
+          windDir={windReferenceDir}
+          colorClass={s.accent}
+        />
       </div>
       {overlay}
     </div>

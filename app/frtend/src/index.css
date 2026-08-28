@@ -72,14 +72,6 @@ input[type='date']::-webkit-calendar-picker-indicator {
   pointer-events: auto;
 }
 
-/*
-  OSM is raster tiles here, so this is a visual remap rather than a true
-  per-layer ocean recolor. The intent is to pull the sea tone toward deep gray.
-*/
-.leaflet-tile.sailsiq-vector-tiles {
-  filter: grayscale(1) brightness(0.72) contrast(1.08);
-}
-
 .sailsiq-telemetry-panel {
   container-type: inline-size;
 }
