@@ -1,6 +1,8 @@
 import { memo, useState, useEffect } from 'react';
 import { useMap, TileLayer } from 'react-leaflet';
 import { Plus, Minus, Wind } from 'lucide-react';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import '@maplibre/maplibre-gl-leaflet';
 import { useTheme } from '@/theme/ThemeContext';
 import { WindDirectionDial } from '@/components/WindDirectionDial';
 import { MAP_CONTROL_LAYER_CLASS } from '@/components/workspaceLayers';
@@ -19,17 +21,15 @@ export function createMarkIcon(type: CourseMark['type'], color: string): DivIcon
 }
 
 export const TILE_SOURCES = {
-  vector: {
-    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: '&copy; OpenStreetMap contributors',
-  },
   satellite: {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Tiles &copy; Esri',
   },
 } as const;
 
-export type MapBaselayerKind = keyof typeof TILE_SOURCES | 'gray';
+export type MapBaselayerKind = keyof typeof TILE_SOURCES | 'vector' | 'gray';
+
+const OPENFREEMAP_DARK_STYLE_URL = 'https://tiles.openfreemap.org/styles/dark';
 
 /** Solid deep gray (no remote tiles) for vector-style overlays without map detail. */
 export const MAP_SOLID_GRAY_FILL = '#2a2b2f';
@@ -61,11 +61,46 @@ const SolidGrayBaseLayer = memo(function SolidGrayBaseLayer() {
   return null;
 });
 
+const OpenFreeMapVectorLayer = memo(function OpenFreeMapVectorLayer() {
+  const map = useMap();
+
+  useEffect(() => {
+    const layer = L.maplibreGL({
+      style: OPENFREEMAP_DARK_STYLE_URL,
+      interactive: false,
+    });
+    layer.addTo(map);
+
+    const maplibreMap = layer.getMaplibreMap();
+    const emptyImage = {
+      width: 1,
+      height: 1,
+      data: new Uint8Array([0, 0, 0, 0]),
+    };
+    const handleMissingImage = (event: { id: string }) => {
+      if (!maplibreMap.hasImage(event.id)) {
+        maplibreMap.addImage(event.id, emptyImage);
+      }
+    };
+    maplibreMap.on('styleimagemissing', handleMissingImage);
+
+    return () => {
+      maplibreMap.off('styleimagemissing', handleMissingImage);
+      map.removeLayer(layer);
+    };
+  }, [map]);
+
+  return null;
+});
+
 export const BaseTileLayer = memo(function BaseTileLayer({
   mapLayer,
 }: {
   mapLayer: MapBaselayerKind;
 }) {
+  if (mapLayer === 'vector') {
+    return <OpenFreeMapVectorLayer />;
+  }
   if (mapLayer === 'gray') {
     return <SolidGrayBaseLayer />;
   }
@@ -75,7 +110,6 @@ export const BaseTileLayer = memo(function BaseTileLayer({
       url={source.url}
       attribution={source.attribution}
       maxZoom={MAP_MAX_ZOOM}
-      className={mapLayer === 'vector' ? 'sailsiq-vector-tiles' : undefined}
     />
   );
 });
@@ -129,13 +163,14 @@ export const ResizeSync = memo(function ResizeSync({
 
 export const ZoomControls = memo(function ZoomControls() {
   const map = useMap();
+  const { s } = useTheme();
 
   return (
     <div className={`absolute right-4 top-20 ${MAP_CONTROL_LAYER_CLASS} pointer-events-auto flex flex-col gap-2`}>
       <button
         type="button"
         onClick={() => map.zoomIn()}
-        className="bg-slate-900/80 text-white p-2 backdrop-blur-md hover:opacity-80 rounded-md"
+        className={`p-2 backdrop-blur-md hover:opacity-80 ${s.buttonSecondary}`}
         title="Zoom in"
       >
         <Plus className="w-4 h-4" />
@@ -143,7 +178,7 @@ export const ZoomControls = memo(function ZoomControls() {
       <button
         type="button"
         onClick={() => map.zoomOut()}
-        className="bg-slate-900/80 text-white p-2 backdrop-blur-md hover:opacity-80 rounded-md"
+        className={`p-2 backdrop-blur-md hover:opacity-80 ${s.buttonSecondary}`}
         title="Zoom out"
       >
         <Minus className="w-4 h-4" />
@@ -156,11 +191,13 @@ export const WindWidget = memo(function WindWidget({
   windDir,
   windSpeed,
   onWindChange,
+  onWindPreviewChange,
   toolbarClass,
 }: {
   windDir: number;
   windSpeed: number;
   onWindChange?: (dir: number, speed: number) => void;
+  onWindPreviewChange?: (dir: number, speed: number, active: boolean) => void;
   toolbarClass?: string;
 }) {
   const { s } = useTheme();
@@ -178,6 +215,16 @@ export const WindWidget = memo(function WindWidget({
 
   const displayWindDir = windInputOpen ? localWindDir : windDir;
   const displayWindSpeed = windInputOpen ? localWindSpeed : windSpeed;
+
+  useEffect(() => {
+    onWindPreviewChange?.(localWindDir, localWindSpeed, windInputOpen);
+  }, [localWindDir, localWindSpeed, onWindPreviewChange, windInputOpen]);
+
+  useEffect(() => {
+    return () => {
+      onWindPreviewChange?.(windDir, windSpeed, false);
+    };
+  }, [onWindPreviewChange, windDir, windSpeed]);
 
   return (
     <div className={`absolute top-4 right-4 ${MAP_CONTROL_LAYER_CLASS} pointer-events-none`}>
