@@ -8,10 +8,13 @@ import {
   Gauge,
   HardDrive,
   Info,
+  Monitor,
+  Moon,
   RefreshCw,
   Save,
   Shield,
   Star,
+  Sun,
   Trash2,
   User,
   X,
@@ -93,7 +96,15 @@ function formatBytes(bytes: number): string {
 }
 
 export default function SettingsPage() {
-  const { s, themeId, allThemes, setTheme } = useTheme();
+  const {
+    s,
+    themeId,
+    colorMode,
+    effectiveColorScheme,
+    allThemes,
+    setTheme,
+    setColorMode,
+  } = useTheme();
   const {
     workspaces,
     currentWorkspace,
@@ -773,7 +784,9 @@ export default function SettingsPage() {
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <span className={`text-sm ${s.textSecondary}`}>Theme</span>
-            <span className={`text-sm ${s.textPrimary}`}>Configured below</span>
+            <span className={`text-sm ${s.textPrimary}`}>
+              {effectiveColorScheme === 'dark' ? 'Dark' : 'Light'}
+            </span>
           </div>
           <div className="flex gap-2 flex-wrap">
             {allThemes.map((theme) => (
@@ -785,6 +798,31 @@ export default function SettingsPage() {
                 } ${isRound ? 'rounded-xl' : 'rounded-sm'}`}
               >
                 {theme.label}
+              </button>
+            ))}
+          </div>
+          <div className={`border-t ${s.divider}`} />
+          <div className="flex items-center justify-between">
+            <span className={`text-sm ${s.textSecondary}`}>Appearance</span>
+            <span className={`text-sm ${s.textPrimary}`}>
+              {colorMode === 'browser' ? 'Browser' : colorMode === 'dark' ? 'Dark' : 'Light'}
+            </span>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            {([
+              ['browser', 'Browser', Monitor],
+              ['light', 'Light', Sun],
+              ['dark', 'Dark', Moon],
+            ] as const).map(([mode, label, Icon]) => (
+              <button
+                key={mode}
+                onClick={() => setColorMode(mode)}
+                className={`inline-flex items-center gap-2 px-4 py-2 text-sm transition-all ${
+                  colorMode === mode ? s.accentBg : `${s.buttonSecondary}`
+                } ${isRound ? 'rounded-xl' : 'rounded-sm'}`}
+              >
+                <Icon className="h-4 w-4" />
+                {label}
               </button>
             ))}
           </div>
