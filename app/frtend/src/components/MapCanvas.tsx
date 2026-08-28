@@ -577,7 +577,7 @@ export default function MapCanvas({
   overlay,
   presentation = false,
 }: MapCanvasProps) {
-  const { s, themeId } = useTheme();
+  const { s, effectiveColorScheme } = useTheme();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [localWindDir, setLocalWindDir] = useState(windDir ?? 0);
   const [localWindSpeed, setLocalWindSpeed] = useState(windSpeed ?? 0);
@@ -669,10 +669,9 @@ export default function MapCanvas({
     setWindReferenceDir(active ? dir : null);
   }, []);
 
-  const isDark = themeId === 'glass' || themeId === 'cyber';
   const toolbarClass = `${s.panel} ${s.textPrimary}`;
   const mapToolButtonClass = `p-2 transition-opacity hover:opacity-70 ${s.textPrimary}`;
-  const boatColor = isDark ? '#ffffff' : '#1c1917';
+  const boatColor = effectiveColorScheme === 'dark' ? '#ffffff' : '#1c1917';
   const viewModeLabel =
     mapViewMode === 'overview' ? 'Overview' : mapViewMode === 'follow' ? 'Follow' : 'Lead';
 
@@ -915,7 +914,7 @@ export default function MapCanvas({
                 position={[currentPoint.lat, currentPoint.lon]}
                 icon={L.divIcon({
                   className: 'sailsiq-lead-indicator',
-                  html: `<div style="width:28px;height:28px;border:1px solid ${isDark ? 'rgba(255,255,255,0.8)' : 'rgba(15,23,42,0.35)'};border-radius:999px;display:flex;align-items:center;justify-content:center;background:${isDark ? 'rgba(15,23,42,0.3)' : 'rgba(255,255,255,0.72)'};"><div style="transform:rotate(${getHeading(currentPoint)}deg);color:${isDark ? '#fff' : '#0f172a'};">▲</div></div>`,
+                  html: `<div style="width:28px;height:28px;border:1px solid ${effectiveColorScheme === 'dark' ? 'rgba(255,255,255,0.8)' : 'rgba(15,23,42,0.35)'};border-radius:999px;display:flex;align-items:center;justify-content:center;background:${effectiveColorScheme === 'dark' ? 'rgba(15,23,42,0.3)' : 'rgba(255,255,255,0.72)'};"><div style="transform:rotate(${getHeading(currentPoint)}deg);color:${effectiveColorScheme === 'dark' ? '#fff' : '#0f172a'};">▲</div></div>`,
                   iconSize: [28, 28],
                   iconAnchor: [14, 14],
                 })}

@@ -1,6 +1,7 @@
 export interface ThemeStyles {
   id: string;
   label: string;
+  colorScheme: 'light' | 'dark';
   wrapper: string;
   bgEffect: string;
   panel: string;
