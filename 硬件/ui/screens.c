@@ -40,14 +40,14 @@
 #define UI_SCREEN_W 400
 #define UI_SCREEN_H 300
 #define UI_SAFE_X 10
-#define UI_TOPBAR_Y 8
-#define UI_TOPBAR_H 22
+#define UI_TOPBAR_Y 4
+#define UI_TOPBAR_H 20
 #define UI_CARD_X 10
-#define UI_CARD_Y 36
+#define UI_CARD_Y 28
 #define UI_CARD_W 380
-#define UI_CARD_H 220
-#define UI_FOOT_Y 262
-#define UI_FOOT_H 28
+#define UI_CARD_H 244
+#define UI_FOOT_Y 276
+#define UI_FOOT_H 20
 #define UI_RULE_W 2
 #define UI_INNER_X 8
 #define UI_INNER_W (UI_CARD_W - UI_INNER_X * 2)
