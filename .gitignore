@@ -9,6 +9,11 @@
 **/.vite/
 **/coverage/
 **/*.tsbuildinfo
+.pio_compass_build/
+.pio_compass_libdeps/
+硬件/**/cadquery_out/
+硬件/**/.ezdxf_cache/
+test_*.step
 
 # Environment
 **/.env
