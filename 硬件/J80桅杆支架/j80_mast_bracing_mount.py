@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 
 import cadquery as cq
+import ezdxf
 
 
 OUT_DIR = Path(__file__).resolve().parent / "cadquery_out"
@@ -598,17 +599,23 @@ def make_mounting_plate(p: Params = P) -> cq.Workplane:
     return plate
 
 
-def make_acrylic_cover_plate(p: Params = P) -> cq.Workplane:
+def make_acrylic_cover_plate(
+    p: Params = P,
+    *,
+    include_screen_window: bool = True,
+    include_screw_head_recess: bool = True,
+) -> cq.Workplane:
     cover = rounded_box_xy(p.cover_w, p.cover_h, p.cover_t, 6.0)
     cover = place_xy_solid_as_xz(cover, p.cover_back_y, p.cover_center_z)
 
-    window = rounded_box_xy(p.cover_window_w, p.cover_window_h, p.cover_t + 2.0, 5.0)
-    window = place_xy_solid_as_xz(
-        window,
-        p.cover_back_y - 1.0,
-        p.mount_center_z + p.cover_window_z_offset,
-    )
-    cover = cover.cut(window)
+    if include_screen_window:
+        window = rounded_box_xy(p.cover_window_w, p.cover_window_h, p.cover_t + 2.0, 5.0)
+        window = place_xy_solid_as_xz(
+            window,
+            p.cover_back_y - 1.0,
+            p.mount_center_z + p.cover_window_z_offset,
+        )
+        cover = cover.cut(window)
 
     for x, dz in clamp_screw_positions(p):
         through_hole = cyl_y(
@@ -618,16 +625,64 @@ def make_acrylic_cover_plate(p: Params = P) -> cq.Workplane:
             p.cover_screw_clearance_d / 2.0,
             p.cover_t + 2.0,
         )
-        head_recess = cyl_y(
-            x,
-            p.cover_front_y - p.screw_head_recess,
-            p.mount_center_z + dz,
-            p.screw_head_d / 2.0,
-            p.screw_head_recess + 0.8,
-        )
-        cover = cover.cut(through_hole).cut(head_recess)
+        cover = cover.cut(through_hole)
+        if include_screw_head_recess:
+            head_recess = cyl_y(
+                x,
+                p.cover_front_y - p.screw_head_recess,
+                p.mount_center_z + dz,
+                p.screw_head_d / 2.0,
+                p.screw_head_recess + 0.8,
+            )
+            cover = cover.cut(head_recess)
 
     return cover
+
+
+def make_acrylic_cover_plate_without_screen_window(p: Params = P) -> cq.Workplane:
+    return make_acrylic_cover_plate(
+        p,
+        include_screen_window=False,
+        include_screw_head_recess=False,
+    )
+
+
+def export_acrylic_cover_plate_without_screen_window_top_dxf(p: Params = P) -> None:
+    path = OUT_DIR / "j80_clear_acrylic_clamp_cover_plate_no_screen_window_top.dxf"
+    doc = ezdxf.new("R2010")
+    doc.units = ezdxf.units.MM
+    msp = doc.modelspace()
+    outline_layer = "CUT_OUTLINE"
+    hole_layer = "THROUGH_HOLES"
+    doc.layers.add(outline_layer, color=7)
+    doc.layers.add(hole_layer, color=1)
+
+    w = p.cover_w
+    h = p.cover_h
+    r = 6.0
+    left = -w / 2.0
+    right = w / 2.0
+    bottom = -h / 2.0
+    top = h / 2.0
+
+    msp.add_line((left + r, bottom), (right - r, bottom), dxfattribs={"layer": outline_layer})
+    msp.add_arc((right - r, bottom + r), r, -90, 0, dxfattribs={"layer": outline_layer})
+    msp.add_line((right, bottom + r), (right, top - r), dxfattribs={"layer": outline_layer})
+    msp.add_arc((right - r, top - r), r, 0, 90, dxfattribs={"layer": outline_layer})
+    msp.add_line((right - r, top), (left + r, top), dxfattribs={"layer": outline_layer})
+    msp.add_arc((left + r, top - r), r, 90, 180, dxfattribs={"layer": outline_layer})
+    msp.add_line((left, top - r), (left, bottom + r), dxfattribs={"layer": outline_layer})
+    msp.add_arc((left + r, bottom + r), r, 180, 270, dxfattribs={"layer": outline_layer})
+
+    z_to_local = p.mount_center_z - p.cover_center_z
+    for x, dz in clamp_screw_positions(p):
+        msp.add_circle(
+            (x, dz + z_to_local),
+            p.cover_screw_clearance_d / 2.0,
+            dxfattribs={"layer": hole_layer},
+        )
+
+    doc.saveas(path)
 
 
 def make_integrated_fixed_panel_bracing(p: Params = P) -> cq.Workplane:
@@ -743,6 +798,11 @@ def export_all(p: Params = P) -> None:
     cq.exporters.export(make_bracing_to_panel_connector_plates(p), str(OUT_DIR / "j80_fixed_panel_to_bracing_transition_web.step"))
     cq.exporters.export(make_mounting_plate(p), str(OUT_DIR / "j80_device_mounting_plate.step"))
     cq.exporters.export(make_acrylic_cover_plate(p), str(OUT_DIR / "j80_clear_acrylic_clamp_cover_plate.step"))
+    cq.exporters.export(
+        make_acrylic_cover_plate_without_screen_window(p),
+        str(OUT_DIR / "j80_clear_acrylic_clamp_cover_plate_no_screen_window.step"),
+    )
+    export_acrylic_cover_plate_without_screen_window_top_dxf(p)
     cq.exporters.export(make_clamp_screw_references(p), str(OUT_DIR / "j80_six_m3_clamp_screw_references.step"))
     cq.exporters.export(make_integrated_fixed_panel_bracing(p), str(OUT_DIR / "j80_integrated_fixed_panel_and_tapered_bracing.step"))
     make_assembly(p).save(str(OUT_DIR / "j80_mast_700mm_semi_bracing_mount_assembly.step"))
