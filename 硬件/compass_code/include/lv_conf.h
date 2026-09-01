@@ -1,0 +1,22 @@
+#pragma once
+
+#ifndef LV_CONF_H
+#define LV_CONF_H
+
+#define LV_COLOR_DEPTH 8
+
+#define LV_USE_DEMO_WIDGETS 0
+#define LV_USE_DEMO_KEYPAD_AND_ENCODER 0
+#define LV_USE_DEMO_BENCHMARK 0
+#define LV_USE_DEMO_STRESS 0
+#define LV_USE_DEMO_MUSIC 0
+#define LV_BUILD_EXAMPLES 0
+
+#define LV_USE_PERF_MONITOR 0
+#define LV_USE_MEM_MONITOR 0
+#define LV_USE_LOG 0
+
+#define LV_FONT_MONTSERRAT_36 1
+#define LV_FONT_MONTSERRAT_48 1
+
+#endif

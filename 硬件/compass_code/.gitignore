@@ -1,0 +1,30 @@
+# PlatformIO build/cache output
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Temporary exports and generated build folders
+tmp/
+build/
+dist/
+out/
+
+# Logs and local diagnostics
+logs/
+*.log
+*.tmp
+*.bak
+
+# Generated firmware/debug artifacts
+*.bin
+*.elf
+*.hex
+*.map
+
+# VS Code / PlatformIO generated files
+.vscode/.browse.c_cpp.db*
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/ipch/
+.clang_complete
+compile_commands.json
