@@ -1,0 +1,12 @@
+{
+  "name": "ui",
+  "version": "0.1.0",
+  "build": {
+    "srcFilter": [
+      "+<*>",
+      "-<tools/>",
+      "-<lv_font_montserrat_160.c>",
+      "-<ui_heading_digit_assets.c>"
+    ]
+  }
+}
