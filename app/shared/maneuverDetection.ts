@@ -35,6 +35,7 @@ export interface ManeuverMetrics {
   speedBefore?: number;
   minSpeed?: number;
   speedLoss?: number;
+  distanceLoss?: number;
   nearestMarkId?: string;
   nearestMarkDistance?: number;
 }
@@ -43,6 +44,7 @@ export interface ManeuverDetectionOptions {
   minSpeedKnots: number;
   turnRateStartDegPerSec: number;
   turnRateEndDegPerSec: number;
+  turnRateWindowMs: number;
   minTurnDurationMs: number;
   maxTurnDurationMs: number;
   eventEndQuietMs: number;
@@ -102,6 +104,7 @@ interface EventFeatures {
   speedBefore?: number;
   minSpeed?: number;
   speedLoss?: number;
+  distanceLoss?: number;
   nearestMark?: {
     mark: ManeuverMark;
     distanceMeters: number;
@@ -112,6 +115,7 @@ const DEFAULT_OPTIONS: ManeuverDetectionOptions = {
   minSpeedKnots: 1,
   turnRateStartDegPerSec: 6,
   turnRateEndDegPerSec: 2,
+  turnRateWindowMs: 1200,
   minTurnDurationMs: 3000,
   maxTurnDurationMs: 180000,
   eventEndQuietMs: 3000,
@@ -168,6 +172,11 @@ function signedMean(values: number[]): number | undefined {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+function mean(values: number[]): number | undefined {
+  if (values.length === 0) return undefined;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
 function percentile(values: number[], p: number): number | undefined {
   if (values.length === 0) return undefined;
   const sorted = [...values].sort((a, b) => a - b);
@@ -190,6 +199,15 @@ function haversineMeters(
     sinLat * sinLat +
     Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
   return 2 * r * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function cumulativeDistanceMeters(points: ManeuverTrackPoint[]): number | undefined {
+  if (points.length < 2) return undefined;
+  let distance = 0;
+  for (let i = 1; i < points.length; i++) {
+    distance += haversineMeters(points[i - 1]!, points[i]!);
+  }
+  return distance;
 }
 
 function bearingDegrees(
@@ -237,7 +255,31 @@ function estimateSpeed(
   return (haversineMeters(previous, point) / dt) * KNOTS_PER_MPS;
 }
 
-function preparePoints(points: ManeuverTrackPoint[]): PreparedPoint[] {
+function findTimeWindowIndex(
+  points: PreparedPoint[],
+  fromIndex: number,
+  direction: -1 | 1,
+  minDeltaMs: number,
+): number {
+  const originTime = points[fromIndex]!.t;
+  let index = fromIndex;
+  while (
+    index + direction >= 0 &&
+    index + direction < points.length &&
+    Math.abs(points[index + direction]!.t - originTime) < minDeltaMs
+  ) {
+    index += direction;
+  }
+  if (index + direction >= 0 && index + direction < points.length) {
+    return index + direction;
+  }
+  return index;
+}
+
+function preparePoints(
+  points: ManeuverTrackPoint[],
+  options: ManeuverDetectionOptions,
+): PreparedPoint[] {
   const sorted = [...points]
     .filter((point) => Number.isFinite(point.t) && validLatLon(point))
     .sort((a, b) => a.t - b.t);
@@ -253,11 +295,14 @@ function preparePoints(points: ManeuverTrackPoint[]): PreparedPoint[] {
     };
   });
 
-  for (let i = 1; i < prepared.length; i++) {
-    const previous = prepared[i - 1]!;
-    const point = prepared[i]!;
-    const dt = Math.max(0.001, (point.t - previous.t) / 1000);
-    point.rate = angleDelta(previous.h, point.h) / dt;
+  const halfRateWindowMs = options.turnRateWindowMs / 2;
+  for (let i = 0; i < prepared.length; i++) {
+    const previousIndex = findTimeWindowIndex(prepared, i, -1, halfRateWindowMs);
+    const nextIndex = findTimeWindowIndex(prepared, i, 1, halfRateWindowMs);
+    const previous = prepared[previousIndex]!;
+    const next = prepared[nextIndex]!;
+    const dt = Math.max(0.001, (next.t - previous.t) / 1000);
+    prepared[i]!.rate = previousIndex === nextIndex ? 0 : angleDelta(previous.h, next.h) / dt;
   }
 
   return prepared;
@@ -270,6 +315,7 @@ function findTurnWindows(
   const windows: TurnWindow[] = [];
   let activeStart: number | null = null;
   let quietSince: number | null = null;
+  let quietStartIndex: number | null = null;
   let apexIndex = 0;
   let apexRate = 0;
 
@@ -279,6 +325,7 @@ function findTurnWindows(
     const duration = points[endIndex]!.t - points[startIndex]!.t;
     activeStart = null;
     quietSince = null;
+    quietStartIndex = null;
     if (duration < options.minTurnDurationMs) return;
     windows.push({ startIndex, endIndex, apexIndex });
   };
@@ -292,6 +339,7 @@ function findTurnWindows(
       if (moving && absRate >= options.turnRateStartDegPerSec) {
         activeStart = Math.max(0, i - 1);
         quietSince = null;
+        quietStartIndex = null;
         apexIndex = i;
         apexRate = absRate;
       }
@@ -310,12 +358,16 @@ function findTurnWindows(
     }
 
     if (absRate <= options.turnRateEndDegPerSec || !moving) {
-      quietSince ??= point.t;
+      if (quietSince == null) {
+        quietSince = point.t;
+        quietStartIndex = i;
+      }
       if (point.t - quietSince >= options.eventEndQuietMs) {
-        closeWindow(i);
+        closeWindow(Math.max(activeStart, (quietStartIndex ?? i) - 1));
       }
     } else {
       quietSince = null;
+      quietStartIndex = null;
     }
   }
 
@@ -406,6 +458,12 @@ function extractFeatures(
   const lossWindowSpeeds = lossWindowPoints.map((point) => point.s).filter(Number.isFinite);
   const speedBefore = percentile(preSpeeds, 0.5);
   const minSpeed = percentile(lossWindowSpeeds, 0.1);
+  const averageSpeedBefore = mean(preSpeeds);
+  const actualDistance = cumulativeDistanceMeters(eventPoints);
+  const expectedDistance =
+    averageSpeedBefore != null
+      ? (averageSpeedBefore / KNOTS_PER_MPS) * Math.max(0, (end.t - start.t) / 1000)
+      : undefined;
 
   return {
     startTime: start.t,
@@ -425,6 +483,10 @@ function extractFeatures(
     minSpeed,
     speedLoss:
       speedBefore != null && minSpeed != null ? Math.max(0, speedBefore - minSpeed) : undefined,
+    distanceLoss:
+      expectedDistance != null && actualDistance != null
+        ? Math.max(0, expectedDistance - actualDistance)
+        : undefined,
     nearestMark: nearestMarkForWindow(eventPoints, marks),
   };
 }
@@ -585,6 +647,7 @@ function buildMetrics(features: EventFeatures): ManeuverMetrics {
     speedBefore: round(features.speedBefore),
     minSpeed: round(features.minSpeed),
     speedLoss: round(features.speedLoss),
+    distanceLoss: round(features.distanceLoss, 0),
     nearestMarkId: features.nearestMark?.mark.id,
     nearestMarkDistance: round(features.nearestMark?.distanceMeters, 0),
   };
@@ -613,6 +676,9 @@ function buildNote(type: ManeuverEventType, confidence: number, metrics: Maneuve
   if (metrics.duration != null) parts.push(`${metrics.duration.toFixed(1)}s`);
   if (metrics.speedLoss != null && metrics.speedLoss > 0) {
     parts.push(`loss ${metrics.speedLoss.toFixed(1)} kts`);
+  }
+  if (metrics.distanceLoss != null && metrics.distanceLoss > 0) {
+    parts.push(`dist ${Math.round(metrics.distanceLoss)} m`);
   }
   return parts.join(' · ');
 }
@@ -676,7 +742,7 @@ function overlapsExisting(
 
 export function detectManeuvers(input: DetectManeuversInput): DetectedManeuver[] {
   const options = { ...DEFAULT_OPTIONS, ...input.options };
-  const points = preparePoints(input.points);
+  const points = preparePoints(input.points, options);
   if (points.length < 4) return [];
 
   const windows = findTurnWindows(points, options);

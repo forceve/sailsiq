@@ -225,6 +225,7 @@ export interface ManeuverMetrics {
   speedBefore?: number;
   minSpeed?: number;
   speedLoss?: number;
+  distanceLoss?: number;
   nearestMarkId?: string;
   nearestMarkDistance?: number;
 }

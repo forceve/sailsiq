@@ -191,14 +191,14 @@ export default function ExportSharePage() {
       {(exporting || result) && (
         <Panel>
           {exporting && (
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-2">
                 <Loader2 className={`w-4 h-4 animate-spin ${s.accent}`} />
                 <span className={`text-sm ${s.textPrimary}`}>
                   Exporting… {progress}%
                 </span>
               </div>
-              <div className={`h-2 ${s.progressTrack}`}>
+              <div className={`h-[5.33px] ${s.progressTrack}`}>
                 <div
                   className={`h-full transition-all ${s.progressFill}`}
                   style={{ width: `${progress}%` }}

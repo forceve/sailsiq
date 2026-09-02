@@ -32,6 +32,7 @@ import VideoSyncDialog from '@/components/VideoSyncDialog';
 import WorkspaceLensLayer from '@/components/WorkspaceLensLayer';
 import WorkspaceMapStage from '@/components/WorkspaceMapStage';
 import WorkspaceTelemetryStage from '@/components/WorkspaceTelemetryStage';
+import SessionSummaryCard from '@/components/SessionSummaryCard';
 import { STAGE_CONTROL_LAYER_CLASS } from '@/components/workspaceLayers';
 import ReplayVideoCompanionPage from '@/pages/ReplayVideoCompanionPage';
 import type { ThemeStyles } from '@/theme/themeTypes';
@@ -708,6 +709,7 @@ function ReplayWorkspaceHostPage() {
   const [syncSessionTimeMs, setSyncSessionTimeMs] = useState(0);
   const [syncVideoTimeMs, setSyncVideoTimeMs] = useState(0);
   const [isVideoDialogOpen, setIsVideoDialogOpen] = useState(false);
+  const [sessionSummaryOpen, setSessionSummaryOpen] = useState(false);
   const [videoDialogTab, setVideoDialogTab] = useState<
     'recommended' | 'workspace' | 'local' | 'url'
   >('recommended');
@@ -4190,6 +4192,10 @@ function ReplayWorkspaceHostPage() {
   const distanceNm = stats.distance / 1852;
   const vmgToWind =
     currentPoint && windDir != null ? getVmgToWind(currentPoint, windDir) : undefined;
+  const summaryWindLabel =
+    windDir != null && windSpeed != null
+      ? `${Math.round(windDir)} deg / ${windSpeed.toFixed(1)} kts`
+      : 'No data';
   const statsRows = [
     { label: 'Duration', val: formatDuration(stats.duration), unit: '' },
     { label: 'Distance', val: distanceNm.toFixed(1), unit: 'NM' },
@@ -4360,16 +4366,19 @@ function ReplayWorkspaceHostPage() {
               >
                 <ChevronLeft className="h-5 w-5" />
               </Link>
-              <div
-                className={`min-w-[130px] max-w-[205px] shrink border px-2 py-1.5 text-left ${s.divider} ${
+              <button
+                type="button"
+                onClick={() => setSessionSummaryOpen(true)}
+                className={`min-w-[130px] max-w-[205px] shrink border px-2 py-1.5 text-left transition-colors ${s.divider} ${s.cardHover} ${
                   isRound ? 'rounded-xl' : 'rounded-sm'
                 }`}
+                title="Open session summary"
               >
                 <p className={sectionLabelClass}>Metadata</p>
                 <h1 className={`truncate text-base font-semibold md:text-lg ${s.textPrimary}`}>
                   {session.name}
                 </h1>
-              </div>
+              </button>
 
               {topBarMetadataItems.map((item) => {
                 const visibilityClass =
@@ -4802,6 +4811,9 @@ function ReplayWorkspaceHostPage() {
                   event.metrics?.speedLoss != null
                     ? `Loss ${event.metrics.speedLoss.toFixed(1)} kts`
                     : null,
+                  event.metrics?.distanceLoss != null
+                    ? `Dist loss ${Math.round(event.metrics.distanceLoss)} m`
+                    : null,
                 ].filter((value): value is string => Boolean(value));
                 return (
                   <div
@@ -5068,6 +5080,29 @@ function ReplayWorkspaceHostPage() {
             </>
           )}
         </aside>
+
+        {sessionSummaryOpen ? (
+          <div
+            className="fixed inset-0 z-[10040] flex items-end justify-center overflow-y-auto bg-black/55 p-3 backdrop-blur-sm sm:items-center sm:p-4"
+            onClick={() => setSessionSummaryOpen(false)}
+            role="presentation"
+          >
+            <div
+              className="flex w-full justify-center"
+              onClick={(event) => event.stopPropagation()}
+              role="presentation"
+            >
+              <SessionSummaryCard
+                session={session}
+                telemetry={telemetry}
+                marks={marks}
+                eventCount={events.length}
+                windLabel={summaryWindLabel}
+                onClose={() => setSessionSummaryOpen(false)}
+              />
+            </div>
+          </div>
+        ) : null}
 
         {syncDialogVideo ? (
           <VideoSyncDialog

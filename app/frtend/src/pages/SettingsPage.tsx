@@ -986,13 +986,13 @@ export default function SettingsPage() {
                   <p className={`text-sm font-semibold ${s.textPrimary}`}>Import progress</p>
                   <span className={`text-xs ${s.textSecondary}`}>{importPercent}%</span>
                 </div>
-                <div className={`mt-3 h-2 overflow-hidden rounded-full ${s.accentBg}`}>
+                <div className={`mt-1.5 h-[5.33px] overflow-hidden rounded-full ${s.accentBg}`}>
                   <div
                     className="h-full rounded-full bg-emerald-400 transition-[width] duration-200"
                     style={{ width: `${importPercent}%` }}
                   />
                 </div>
-                <div className={`mt-3 flex flex-col gap-1 text-sm ${s.textSecondary}`}>
+                <div className={`mt-1.5 flex flex-col gap-1 text-sm ${s.textSecondary}`}>
                   <div>
                     {importProgress.currentFileIndex}/{importProgress.totalFiles}:{' '}
                     <span className={s.textPrimary}>

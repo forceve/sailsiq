@@ -65,6 +65,9 @@ export default function WorkspaceLensLayer({
     selectedEventMetrics?.speedLoss != null
       ? `Loss ${selectedEventMetrics.speedLoss.toFixed(1)} kts`
       : null,
+    selectedEventMetrics?.distanceLoss != null
+      ? `Dist loss ${Math.round(selectedEventMetrics.distanceLoss)} m`
+      : null,
     selectedEventMetrics?.entryTwa != null && selectedEventMetrics.exitTwa != null
       ? `TWA ${Math.round(selectedEventMetrics.entryTwa)} to ${Math.round(selectedEventMetrics.exitTwa)}`
       : null,
