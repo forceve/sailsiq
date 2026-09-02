@@ -15,6 +15,11 @@
 硬件/**/.ezdxf_cache/
 test_*.step
 
+# Playwright
+.playwright-mcp/
+playwright-report/
+test-results/
+
 # Environment
 **/.env
 **/.env.local
