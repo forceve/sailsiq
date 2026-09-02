@@ -16,6 +16,7 @@ typedef enum {
     UI_PAGE_SETTINGS,
     UI_PAGE_LAYOUT,
     UI_PAGE_CALIBRATION,
+    UI_PAGE_SYSTEM,
 } ui_page_t;
 
 typedef enum {
@@ -79,6 +80,11 @@ typedef enum {
 } ui_brightness_profile_t;
 
 typedef enum {
+    UI_CLOCK_GPS,
+    UI_CLOCK_MANUAL,
+} ui_clock_mode_t;
+
+typedef enum {
     UI_CMD_NONE,
     UI_CMD_START_TIMER,
     UI_CMD_RESET_TIMER,
@@ -89,6 +95,9 @@ typedef enum {
     UI_CMD_TOGGLE_APPROACH_LOCK,
     UI_CMD_CALIBRATION_SET,         /* value: ui_calibration_target_t */
     UI_CMD_MANUAL_PAGE_SELECTED,    /* value: ui_page_t */
+    UI_CMD_SET_CLOCK_MINUTES,       /* value: minutes since midnight */
+    UI_CMD_SET_CLOCK_DATE,          /* value: yyyymmdd */
+    UI_CMD_SET_CLOCK_MODE,          /* value: ui_clock_mode_t */
 } ui_command_t;
 
 typedef void (*ui_command_handler_t)(ui_command_t command, int32_t value);
@@ -124,8 +133,12 @@ typedef struct {
     uint8_t sat_count;
     bool recording;
     uint8_t battery_percent;
+    uint16_t year;
+    uint8_t month;
+    uint8_t day;
     uint8_t hour;
     uint8_t minute;
+    ui_clock_mode_t clock_mode;
     bool logger_error;
 } ui_status_t;
 

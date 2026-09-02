@@ -52,6 +52,14 @@ UI_WEAK bool ui_layout_storage_save(const ui_layout_config_t *config) { (void)co
 #include <stddef.h>
 #include <string.h>
 
+#define UI_SYSTEM_TIME_EDIT_OFF 0
+#define UI_SYSTEM_TIME_EDIT_MODE 1
+#define UI_SYSTEM_TIME_EDIT_YEAR 2
+#define UI_SYSTEM_TIME_EDIT_MONTH 3
+#define UI_SYSTEM_TIME_EDIT_DAY 4
+#define UI_SYSTEM_TIME_EDIT_HOUR 5
+#define UI_SYSTEM_TIME_EDIT_MINUTE 6
+
 static ui_model_t s_model;
 static bool s_has_external_model = false;
 static ui_page_t s_previous_main_page = UI_PAGE_COMPASS;
@@ -59,6 +67,8 @@ static uint8_t s_settings_selection = 0;
 static uint8_t s_layout_selection = 0;
 static bool s_layout_editing = false;
 static uint8_t s_calibration_selection = 0;
+static uint8_t s_system_selection = 0;
+static uint8_t s_system_time_edit_field = 0;
 static uint32_t s_last_mock_tick = 0;
 static ui_command_handler_t s_command_handler = NULL;
 
@@ -146,14 +156,81 @@ static void load_layout_config(void) {
     }
 }
 
+static bool ui_is_leap_year(uint16_t year) {
+    return (year % 4u == 0u && year % 100u != 0u) || year % 400u == 0u;
+}
+
+static uint8_t ui_days_in_month(uint16_t year, uint8_t month) {
+    static const uint8_t days[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    if (month < 1 || month > 12) {
+        return 31;
+    }
+    if (month == 2 && ui_is_leap_year(year)) {
+        return 29;
+    }
+    return days[month - 1];
+}
+
+static void ui_clamp_date(ui_status_t *status) {
+    if (status->year < 2020) {
+        status->year = 2020;
+    } else if (status->year > 2099) {
+        status->year = 2099;
+    }
+    if (status->month < 1) {
+        status->month = 1;
+    } else if (status->month > 12) {
+        status->month = 12;
+    }
+    uint8_t max_day = ui_days_in_month(status->year, status->month);
+    if (status->day < 1) {
+        status->day = 1;
+    } else if (status->day > max_day) {
+        status->day = max_day;
+    }
+}
+
+static int32_t ui_clock_date_value(const ui_status_t *status) {
+    return (int32_t)status->year * 10000 + (int32_t)status->month * 100 + (int32_t)status->day;
+}
+
+static void ui_increment_mock_clock(void) {
+    s_model.status.minute++;
+    if (s_model.status.minute < 60) {
+        return;
+    }
+    s_model.status.minute = 0;
+    s_model.status.hour++;
+    if (s_model.status.hour < 24) {
+        return;
+    }
+    s_model.status.hour = 0;
+    s_model.status.day++;
+    if (s_model.status.day <= ui_days_in_month(s_model.status.year, s_model.status.month)) {
+        return;
+    }
+    s_model.status.day = 1;
+    s_model.status.month++;
+    if (s_model.status.month <= 12) {
+        return;
+    }
+    s_model.status.month = 1;
+    s_model.status.year++;
+    ui_clamp_date(&s_model.status);
+}
+
 static void init_mock_model(void) {
     memset(&s_model, 0, sizeof(s_model));
     s_model.status.fix = FIX_3D;
     s_model.status.sat_count = 12;
     s_model.status.recording = true;
     s_model.status.battery_percent = 82;
+    s_model.status.year = 2026;
+    s_model.status.month = 5;
+    s_model.status.day = 17;
     s_model.status.hour = 14;
     s_model.status.minute = 32;
+    s_model.status.clock_mode = UI_CLOCK_GPS;
     s_model.nav.heading_deg = 360.0f;
     s_model.nav.cog_deg = 25.0f;
     s_model.nav.sog_kn = 5.7f;
@@ -191,6 +268,7 @@ void loadScreen(enum ScreensEnum screenId) {
     case SCREEN_ID_SETTINGS: ui_set_page(UI_PAGE_SETTINGS); break;
     case SCREEN_ID_LAYOUT: ui_set_page(UI_PAGE_LAYOUT); break;
     case SCREEN_ID_CALIBRATION: ui_set_page(UI_PAGE_CALIBRATION); break;
+    case SCREEN_ID_SYSTEM: ui_set_page(UI_PAGE_SYSTEM); break;
     default: ui_set_page(UI_PAGE_COMPASS); break;
     }
 }
@@ -207,7 +285,7 @@ void ui_tick(void) {
     uint32_t now = lv_tick_get();
     if (!s_has_external_model && (s_last_mock_tick == 0 || now - s_last_mock_tick >= 1000)) {
         s_last_mock_tick = now;
-        s_model.status.minute = (uint8_t)((s_model.status.minute + 1) % 60);
+        ui_increment_mock_clock();
         s_model.nav.heading_deg += 3.0f;
         if (s_model.nav.heading_deg >= 360.0f) {
             s_model.nav.heading_deg -= 360.0f;
@@ -226,7 +304,7 @@ void ui_tick(void) {
 }
 
 void ui_set_page(ui_page_t page) {
-    if (page != UI_PAGE_SETTINGS && page != UI_PAGE_LAYOUT && page != UI_PAGE_CALIBRATION) {
+    if (page != UI_PAGE_SETTINGS && page != UI_PAGE_LAYOUT && page != UI_PAGE_CALIBRATION && page != UI_PAGE_SYSTEM) {
         s_previous_main_page = page;
     }
     screens_set_page(page);
@@ -307,10 +385,12 @@ static void handle_page_button(ui_press_t press) {
             screens_set_layout_editing(false);
             s_layout_selection = screens_layout_get_selection();
             ui_set_page(s_previous_main_page);
-        } else if (page == UI_PAGE_SETTINGS || page == UI_PAGE_CALIBRATION) {
+        } else if (page == UI_PAGE_SETTINGS || page == UI_PAGE_CALIBRATION || page == UI_PAGE_SYSTEM) {
             s_layout_editing = false;
             screens_set_layout_editing(false);
             s_layout_selection = screens_layout_get_selection();
+            s_system_time_edit_field = 0;
+            screens_set_system_time_edit_field(0);
             ui_set_page(s_previous_main_page);
         } else {
             s_previous_main_page = page;
@@ -327,6 +407,13 @@ static void handle_page_button(ui_press_t press) {
             }
         } else if (page == UI_PAGE_CALIBRATION) {
             ui_set_page(UI_PAGE_SETTINGS);
+        } else if (page == UI_PAGE_SYSTEM) {
+            if (s_system_time_edit_field != 0) {
+                s_system_time_edit_field = 0;
+                screens_set_system_time_edit_field(0);
+            } else {
+                ui_set_page(UI_PAGE_SETTINGS);
+            }
         } else if (page == UI_PAGE_SETTINGS) {
             ui_set_page(s_previous_main_page);
         } else {
@@ -373,6 +460,8 @@ static void handle_action_button(ui_press_t press) {
             ui_set_page(UI_PAGE_CALIBRATION);
         } else if (s_settings_selection == 5) {
             request_brightness_cycle();
+        } else if (s_settings_selection == 6) {
+            ui_set_page(UI_PAGE_SYSTEM);
         }
     } else if (page == UI_PAGE_LAYOUT) {
         if (press == UI_PRESS_LONG) {
@@ -410,6 +499,15 @@ static void handle_action_button(ui_press_t press) {
         }
     } else if (page == UI_PAGE_CALIBRATION && press == UI_PRESS_SHORT) {
         emit_command(UI_CMD_CALIBRATION_SET, (int32_t)s_calibration_selection);
+    } else if (page == UI_PAGE_SYSTEM && press == UI_PRESS_SHORT) {
+        if (s_system_selection == 0) {
+            if (s_system_time_edit_field == UI_SYSTEM_TIME_EDIT_MODE && s_model.status.clock_mode == UI_CLOCK_GPS) {
+                s_system_time_edit_field = UI_SYSTEM_TIME_EDIT_OFF;
+            } else {
+                s_system_time_edit_field = (uint8_t)((s_system_time_edit_field + 1) % (UI_SYSTEM_TIME_EDIT_MINUTE + 1));
+            }
+            screens_set_system_time_edit_field(s_system_time_edit_field);
+        }
     } else if (page == UI_PAGE_MARK && press == UI_PRESS_SHORT) {
         if (!emit_command(UI_CMD_TOGGLE_APPROACH_LOCK, 0) && !s_has_external_model) {
             s_model.course.approach_lock = !s_model.course.approach_lock;
@@ -475,6 +573,125 @@ static void handle_adjust_button(ui_button_t btn, ui_press_t press) {
     case UI_PAGE_CALIBRATION:
         s_calibration_selection = (uint8_t)((s_calibration_selection + 8 + delta) % 8);
         screens_set_calibration_selection(s_calibration_selection);
+        break;
+    case UI_PAGE_SYSTEM:
+        if (s_system_selection == 0 && s_system_time_edit_field != 0) {
+            int minutes = (int)s_model.status.hour * 60 + (int)s_model.status.minute;
+            ui_status_t next_status = s_model.status;
+            if (s_system_time_edit_field == UI_SYSTEM_TIME_EDIT_MODE) {
+                next_status.clock_mode = next_status.clock_mode == UI_CLOCK_GPS ? UI_CLOCK_MANUAL : UI_CLOCK_GPS;
+                if (emit_command(UI_CMD_SET_CLOCK_MODE, (int32_t)next_status.clock_mode)) {
+                    return;
+                }
+                if (s_has_external_model) {
+                    return;
+                }
+                s_model.status.clock_mode = next_status.clock_mode;
+                screens_update(&s_model);
+                return;
+            }
+            if (s_system_time_edit_field == UI_SYSTEM_TIME_EDIT_YEAR) {
+                next_status.year = (uint16_t)((int)next_status.year + delta);
+                ui_clamp_date(&next_status);
+                if (emit_command(UI_CMD_SET_CLOCK_DATE, ui_clock_date_value(&next_status))) {
+                    return;
+                }
+                if (s_has_external_model) {
+                    return;
+                }
+                s_model.status.year = next_status.year;
+                s_model.status.month = next_status.month;
+                s_model.status.day = next_status.day;
+                screens_update(&s_model);
+                return;
+            }
+            if (s_system_time_edit_field == UI_SYSTEM_TIME_EDIT_MONTH) {
+                int month = (int)next_status.month + delta;
+                while (month < 1) {
+                    month += 12;
+                    next_status.year--;
+                }
+                while (month > 12) {
+                    month -= 12;
+                    next_status.year++;
+                }
+                next_status.month = (uint8_t)month;
+                ui_clamp_date(&next_status);
+                if (emit_command(UI_CMD_SET_CLOCK_DATE, ui_clock_date_value(&next_status))) {
+                    return;
+                }
+                if (s_has_external_model) {
+                    return;
+                }
+                s_model.status.year = next_status.year;
+                s_model.status.month = next_status.month;
+                s_model.status.day = next_status.day;
+                screens_update(&s_model);
+                return;
+            }
+            if (s_system_time_edit_field == UI_SYSTEM_TIME_EDIT_DAY) {
+                int day = (int)next_status.day + delta;
+                int max_day = ui_days_in_month(next_status.year, next_status.month);
+                while (day < 1) {
+                    next_status.month--;
+                    if (next_status.month < 1) {
+                        next_status.month = 12;
+                        next_status.year--;
+                    }
+                    max_day = ui_days_in_month(next_status.year, next_status.month);
+                    day += max_day;
+                }
+                while (day > max_day) {
+                    day -= max_day;
+                    next_status.month++;
+                    if (next_status.month > 12) {
+                        next_status.month = 1;
+                        next_status.year++;
+                    }
+                    max_day = ui_days_in_month(next_status.year, next_status.month);
+                }
+                next_status.day = (uint8_t)day;
+                ui_clamp_date(&next_status);
+                if (emit_command(UI_CMD_SET_CLOCK_DATE, ui_clock_date_value(&next_status))) {
+                    return;
+                }
+                if (s_has_external_model) {
+                    return;
+                }
+                s_model.status.year = next_status.year;
+                s_model.status.month = next_status.month;
+                s_model.status.day = next_status.day;
+                screens_update(&s_model);
+                return;
+            }
+            if (s_system_time_edit_field == UI_SYSTEM_TIME_EDIT_HOUR || s_system_time_edit_field == UI_SYSTEM_TIME_EDIT_MINUTE) {
+                minutes += s_system_time_edit_field == UI_SYSTEM_TIME_EDIT_HOUR ? delta * 60 : delta;
+                while (minutes < 0) {
+                    minutes += 24 * 60;
+                }
+                while (minutes >= 24 * 60) {
+                    minutes -= 24 * 60;
+                }
+                if (emit_command(UI_CMD_SET_CLOCK_MINUTES, minutes)) {
+                    return;
+                }
+                if (s_has_external_model) {
+                    return;
+                }
+                s_model.status.hour = (uint8_t)(minutes / 60);
+                s_model.status.minute = (uint8_t)(minutes % 60);
+                screens_update(&s_model);
+                return;
+            }
+            return;
+        } else {
+            s_system_selection = (uint8_t)((s_system_selection + 6 + delta) % 6);
+            screens_set_system_selection(s_system_selection);
+            if (s_system_selection != 0 && s_system_time_edit_field != 0) {
+                s_system_time_edit_field = 0;
+                screens_set_system_time_edit_field(0);
+            }
+        }
         break;
     default:
         return;
