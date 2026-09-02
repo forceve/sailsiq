@@ -12,6 +12,7 @@ import {
   Pencil,
   Save,
   Settings,
+  Gauge,
   Trash2,
   Undo2,
   Wind,
@@ -56,6 +57,12 @@ const MARK_TYPES: Array<{ type: MarkType; label: string }> = [
 ];
 const WAYPOINT_CANVAS_PANE = 'waypoint-canvas-pane';
 const WAYPOINT_LABEL_LIMIT = 180;
+const KNOTS_PER_MPS = 1.94384;
+const DEFAULT_CANVAS_SPEED_KTS = 6;
+
+function roundSpeedKts(speed: number): number {
+  return Math.round(speed * 10) / 10;
+}
 
 function createWaypointIcon(index: number, color: string): DivIcon {
   return L.divIcon({
@@ -124,6 +131,69 @@ function interpolatePoint(
 
 function planarDistance(start: [number, number], end: [number, number]): number {
   return Math.hypot(end[0] - start[0], end[1] - start[1]);
+}
+
+function cumulativePlanarDistances(points: [number, number][]): number[] {
+  const distances = [0];
+  for (let index = 1; index < points.length; index++) {
+    distances.push(distances[index - 1]! + planarDistance(points[index - 1]!, points[index]!));
+  }
+  return distances;
+}
+
+function validSpeedOrFallback(speed: number | undefined, fallbackSpeed: number): number {
+  return Number.isFinite(speed) && speed != null && speed > 0 ? speed : fallbackSpeed;
+}
+
+function equivalentSpeedForDistanceRange(
+  startDistance: number,
+  endDistance: number,
+  sourceDistances: number[],
+  sourceSpeeds: number[],
+  fallbackSpeed: number,
+): number {
+  const targetDistance = Math.max(0, endDistance - startDistance);
+  if (targetDistance <= 1e-9) return fallbackSpeed;
+
+  let elapsedDistancePerKnot = 0;
+  for (let index = 1; index < sourceDistances.length; index++) {
+    const segmentStart = sourceDistances[index - 1]!;
+    const segmentEnd = sourceDistances[index]!;
+    const overlap = Math.max(0, Math.min(endDistance, segmentEnd) - Math.max(startDistance, segmentStart));
+    if (overlap <= 1e-9) continue;
+    elapsedDistancePerKnot += overlap / validSpeedOrFallback(sourceSpeeds[index], fallbackSpeed);
+  }
+
+  if (elapsedDistancePerKnot <= 1e-9) return fallbackSpeed;
+  return roundSpeedKts(targetDistance / elapsedDistancePerKnot);
+}
+
+function redistributePathSpeeds(
+  sourcePoints: [number, number][],
+  sourceSpeeds: number[],
+  redistributedPoints: [number, number][],
+  fallbackSpeed: number,
+): number[] {
+  if (redistributedPoints.length === 0) return [];
+  if (redistributedPoints.length === 1) {
+    return [validSpeedOrFallback(sourceSpeeds[0], fallbackSpeed)];
+  }
+
+  const sourceDistances = cumulativePlanarDistances(sourcePoints);
+  const redistributedDistances = cumulativePlanarDistances(redistributedPoints);
+  const result = Array.from({ length: redistributedPoints.length }, () => fallbackSpeed);
+
+  for (let index = 1; index < redistributedPoints.length; index++) {
+    result[index] = equivalentSpeedForDistanceRange(
+      redistributedDistances[index - 1]!,
+      redistributedDistances[index]!,
+      sourceDistances,
+      sourceSpeeds,
+      fallbackSpeed,
+    );
+  }
+  result[0] = result[1] ?? validSpeedOrFallback(sourceSpeeds[0], fallbackSpeed);
+  return result;
 }
 
 function redistributePathPoints(
@@ -603,16 +673,19 @@ export default function CanvasWorkspacePage() {
   const [drawTool, setDrawTool] = useState<DrawTool>('select');
   const [markType, setMarkType] = useState<MarkType>('mark');
   const [pathPoints, setPathPoints] = useState<[number, number][]>([]);
+  const [pathSpeedKts, setPathSpeedKts] = useState<number[]>([]);
   const [localMarks, setLocalMarks] = useState<LocalMark[]>([]);
   const [selectedWaypoint, setSelectedWaypoint] = useState<number | null>(null);
   const [selectedMarkId, setSelectedMarkId] = useState<string | null>(null);
   const [windDir, setWindDir] = useState(0);
   const [windSpeed, setWindSpeed] = useState(0);
+  const [canvasSpeedInput, setCanvasSpeedInput] = useState(String(DEFAULT_CANVAS_SPEED_KTS));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [fitVersion, setFitVersion] = useState(0);
   const [nodeCountInput, setNodeCountInput] = useState('');
   const [pathBeforeNodeAdjust, setPathBeforeNodeAdjust] = useState<[number, number][] | null>(null);
+  const [pathSpeedBeforeNodeAdjust, setPathSpeedBeforeNodeAdjust] = useState<number[] | null>(null);
   const initialMarkIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -639,10 +712,17 @@ export default function CanvasWorkspacePage() {
 
     void load()
       .then(({ nextSession, track, marks, local: _local }) => {
+        const firstSavedSpeed =
+          track.find((point) => point.s != null && point.s > 0)?.s ??
+          (nextSession.source === 'manual' && nextSession.stats.avgSpeed > 0
+            ? nextSession.stats.avgSpeed
+            : DEFAULT_CANVAS_SPEED_KTS);
         setSession(nextSession);
         setCanvasType(nextSession.canvasType ?? 'worldmap');
         setPathPoints(track.map((point) => [point.lat, point.lon] as [number, number]));
+        setPathSpeedKts(track.map((point) => roundSpeedKts(point.s && point.s > 0 ? point.s : firstSavedSpeed)));
         setPathBeforeNodeAdjust(null);
+        setPathSpeedBeforeNodeAdjust(null);
         setLocalMarks(
           marks.map((mark) => ({
             id: mark.id,
@@ -655,6 +735,7 @@ export default function CanvasWorkspacePage() {
         initialMarkIdsRef.current = new Set(marks.map((mark) => mark.id));
         if (track[0]?.w_d != null) setWindDir(Math.round(track[0].w_d));
         if (track[0]?.w_s != null) setWindSpeed(track[0].w_s);
+        setCanvasSpeedInput(String(firstSavedSpeed));
         setFitVersion((version) => version + 1);
       })
       .catch(() => {});
@@ -673,6 +754,12 @@ export default function CanvasWorkspacePage() {
   const positions = pathPoints as LatLngExpression[];
   const parsedNodeCountInput = Number(nodeCountInput);
   const hasValidNodeCountInput = Number.isFinite(parsedNodeCountInput);
+  const parsedCanvasSpeedInput = Number(canvasSpeedInput);
+  const hasValidCanvasSpeedInput =
+    Number.isFinite(parsedCanvasSpeedInput) && parsedCanvasSpeedInput > 0;
+  const canvasSpeedKts = hasValidCanvasSpeedInput
+    ? roundSpeedKts(parsedCanvasSpeedInput)
+    : DEFAULT_CANVAS_SPEED_KTS;
   const minAdjustableWaypointCount = pathPoints.length > 1 ? 2 : 1;
   const roundedNodeCountInput = hasValidNodeCountInput ? Math.round(parsedNodeCountInput) : pathPoints.length;
   const maxAdjustableWaypointCount = Math.max(
@@ -685,13 +772,18 @@ export default function CanvasWorkspacePage() {
     hasValidNodeCountInput &&
     roundedNodeCountInput >= minAdjustableWaypointCount &&
     roundedNodeCountInput !== pathPoints.length;
+  const hasValidPathSpeeds =
+    pathPoints.length < 2 ||
+    pathSpeedKts.slice(1, pathPoints.length).every((speed) => Number.isFinite(speed) && speed > 0);
 
   const handleAddPoint = useCallback((lat: number, lon: number) => {
     setPathBeforeNodeAdjust(null);
+    setPathSpeedBeforeNodeAdjust(null);
     setPathPoints((prev) => [...prev, [lat, lon]]);
+    setPathSpeedKts((prev) => [...prev, hasValidCanvasSpeedInput ? canvasSpeedKts : 0]);
     setSelectedWaypoint(null);
     setSelectedMarkId(null);
-  }, []);
+  }, [canvasSpeedKts, hasValidCanvasSpeedInput]);
 
   const handleAddMark = useCallback((lat: number, lon: number) => {
     const label = MARK_TYPES.find((item) => item.type === markType)?.label ?? markType;
@@ -705,6 +797,7 @@ export default function CanvasWorkspacePage() {
 
   const handleMoveWaypoint = useCallback((index: number, lat: number, lon: number) => {
     setPathBeforeNodeAdjust(null);
+    setPathSpeedBeforeNodeAdjust(null);
     setPathPoints((prev) =>
       prev.map((item, itemIndex) => (itemIndex === index ? [lat, lon] : item)),
     );
@@ -721,39 +814,56 @@ export default function CanvasWorkspacePage() {
 
   const handleApplyNodeCount = useCallback(() => {
     if (!canApplyNodeCount) return;
+    const nextPathPoints = redistributePathPoints(pathPoints, roundedNodeCountInput);
     setPathBeforeNodeAdjust(clonePathPoints(pathPoints));
-    setPathPoints(redistributePathPoints(pathPoints, roundedNodeCountInput));
+    setPathSpeedBeforeNodeAdjust([...pathSpeedKts]);
+    setPathPoints(nextPathPoints);
+    setPathSpeedKts(redistributePathSpeeds(pathPoints, pathSpeedKts, nextPathPoints, canvasSpeedKts));
     setSelectedWaypoint(null);
     setSelectedMarkId(null);
-  }, [canApplyNodeCount, pathPoints, roundedNodeCountInput]);
+  }, [canApplyNodeCount, canvasSpeedKts, pathPoints, pathSpeedKts, roundedNodeCountInput]);
 
   const handleRestoreNodeAdjust = useCallback(() => {
     if (!pathBeforeNodeAdjust) return;
     setPathPoints(clonePathPoints(pathBeforeNodeAdjust));
+    setPathSpeedKts(pathSpeedBeforeNodeAdjust ? [...pathSpeedBeforeNodeAdjust] : []);
     setPathBeforeNodeAdjust(null);
+    setPathSpeedBeforeNodeAdjust(null);
     setSelectedWaypoint(null);
     setSelectedMarkId(null);
-  }, [pathBeforeNodeAdjust]);
+  }, [pathBeforeNodeAdjust, pathSpeedBeforeNodeAdjust]);
 
   const handleSave = useCallback(async () => {
     if (!sessionId) return;
     setSaving(true);
     setSaveError(null);
     try {
-      const intervalMs = 5000;
+      if (!hasValidPathSpeeds) {
+        throw new Error('Every drawn track segment needs a speed greater than 0 kts.');
+      }
+
+      let elapsedMs = 0;
       const trackPoints: TrackPoint[] = pathPoints.map((point, index) => {
         const prev = pathPoints[index - 1];
         const next = pathPoints[index + 1];
         const target = next ?? prev ?? point;
         const source = next ? point : prev ?? point;
         const heading = source === target ? 0 : calculateBearing(source[0], source[1], target[0], target[1]);
-        const distance = source === target ? 0 : haversineDistance(source[0], source[1], target[0], target[1]);
+        const pointSpeedKts =
+          index === 0
+            ? pathSpeedKts[1] ?? pathSpeedKts[0] ?? canvasSpeedKts
+            : pathSpeedKts[index] ?? canvasSpeedKts;
+        const pointSpeedMps = pointSpeedKts / KNOTS_PER_MPS;
+        if (prev) {
+          const previousDistance = haversineDistance(prev[0], prev[1], point[0], point[1]);
+          elapsedMs += pointSpeedMps > 0 ? (previousDistance / pointSpeedMps) * 1000 : 0;
+        }
         return {
-          t: index * intervalMs,
+          t: Math.round(elapsedMs),
           lat: point[0],
           lon: point[1],
           h: Math.round(heading),
-          s: Math.round((distance / (intervalMs / 1000)) * 1.94384 * 10) / 10,
+          s: pathPoints.length >= 2 ? roundSpeedKts(pointSpeedKts) : 0,
           ...(windDir > 0 ? { w_d: windDir } : {}),
           ...(windSpeed > 0 ? { w_s: windSpeed } : {}),
         };
@@ -772,7 +882,7 @@ export default function CanvasWorkspacePage() {
       }
 
       const nextStats = {
-        duration: trackPoints.length > 1 ? (trackPoints.length - 1) * (intervalMs / 1000) : 0,
+        duration: trackPoints.length > 1 ? Math.round((trackPoints[trackPoints.length - 1]!.t - trackPoints[0]!.t) / 1000) : 0,
         distance: Math.round(totalDistance),
         avgSpeed: speeds.length > 0 ? Math.round((speeds.reduce((a, b) => a + b, 0) / speeds.length) * 10) / 10 : 0,
         maxSpeed: speeds.length > 0 ? Math.max(...speeds) : 0,
@@ -829,7 +939,20 @@ export default function CanvasWorkspacePage() {
     } finally {
       setSaving(false);
     }
-  }, [canvasType, currentWorkspace, localMarks, navigate, pathPoints, session, sessionId, windDir, windSpeed]);
+  }, [
+    canvasSpeedKts,
+    canvasType,
+    currentWorkspace,
+    hasValidPathSpeeds,
+    localMarks,
+    navigate,
+    pathPoints,
+    pathSpeedKts,
+    session,
+    sessionId,
+    windDir,
+    windSpeed,
+  ]);
 
   const blankBgStyle =
     canvasType === 'blank'
@@ -892,12 +1015,25 @@ export default function CanvasWorkspacePage() {
           
           <div className="h-4 w-px bg-slate-300 dark:bg-slate-700" />
 
-          <button type="button" onClick={() => { setPathBeforeNodeAdjust(null); setPathPoints((prev) => prev.slice(0, -1)); }} className={`px-3 py-1.5 text-xs rounded-md border ${s.divider} hover:bg-black/5 dark:hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed`} disabled={pathPoints.length === 0}><Undo2 className="w-3.5 h-3.5 inline mr-1.5" />Undo</button>
-          <button type="button" onClick={() => { setPathBeforeNodeAdjust(null); setPathPoints([]); }} className={`px-3 py-1.5 text-xs rounded-md border ${s.divider} hover:bg-black/5 dark:hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-red-600 dark:text-red-400`} disabled={pathPoints.length === 0}><Trash2 className="w-3.5 h-3.5 inline mr-1.5" />Clear</button>
+          <button type="button" onClick={() => { setPathBeforeNodeAdjust(null); setPathSpeedBeforeNodeAdjust(null); setPathPoints((prev) => prev.slice(0, -1)); setPathSpeedKts((prev) => prev.slice(0, -1)); }} className={`px-3 py-1.5 text-xs rounded-md border ${s.divider} hover:bg-black/5 dark:hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed`} disabled={pathPoints.length === 0}><Undo2 className="w-3.5 h-3.5 inline mr-1.5" />Undo</button>
+          <button type="button" onClick={() => { setPathBeforeNodeAdjust(null); setPathSpeedBeforeNodeAdjust(null); setPathPoints([]); setPathSpeedKts([]); }} className={`px-3 py-1.5 text-xs rounded-md border ${s.divider} hover:bg-black/5 dark:hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-red-600 dark:text-red-400`} disabled={pathPoints.length === 0}><Trash2 className="w-3.5 h-3.5 inline mr-1.5" />Clear</button>
           
           <div className="flex-1" />
           
-          <button type="button" onClick={handleSave} disabled={saving || (pathPoints.length === 0 && localMarks.length === 0)} className={`px-4 py-2 text-sm font-medium rounded-md shadow-sm transition-all ${s.buttonPrimary} ${saving ? 'opacity-40 cursor-not-allowed' : 'hover:shadow-md active:scale-95'}`}>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={
+              saving ||
+              (pathPoints.length === 0 && localMarks.length === 0) ||
+              !hasValidPathSpeeds
+            }
+            className={`px-4 py-2 text-sm font-medium rounded-md shadow-sm transition-all ${s.buttonPrimary} ${
+              saving || !hasValidPathSpeeds
+                ? 'opacity-40 cursor-not-allowed'
+                : 'hover:shadow-md active:scale-95'
+            }`}
+          >
             <Save className="w-4 h-4 inline mr-1.5" />
             {saving ? 'Saving...' : currentWorkspace ? 'Save to Workspace' : 'Save & Replay'}
           </button>
@@ -1014,6 +1150,54 @@ export default function CanvasWorkspacePage() {
             </div>
           </div>
 
+          <div className={`p-4 rounded-xl border ${s.divider} bg-black/5 dark:bg-white/5 space-y-3`}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className={`text-sm font-semibold ${s.textPrimary} flex items-center gap-2`}>
+                  <Gauge className="w-4 h-4 text-amber-500" />
+                  Track Speed
+                </div>
+                <div className={`text-[10px] uppercase tracking-wider ${s.textSecondary}`}>
+                  Applied to new drawn segments.
+                </div>
+              </div>
+              <div className={`text-xs font-mono ${s.textSecondary}`}>kts</div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0.1}
+                step={0.1}
+                value={canvasSpeedInput}
+                onChange={(e) => setCanvasSpeedInput(e.target.value)}
+                className={`w-full px-3 py-2 text-sm rounded-md border ${
+                  hasValidCanvasSpeedInput ? s.divider : 'border-red-300 dark:border-red-800'
+                } bg-white dark:bg-black/40 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-shadow`}
+              />
+              {[4, 6, 8].map((speed) => (
+                <button
+                  key={speed}
+                  type="button"
+                  onClick={() => setCanvasSpeedInput(String(speed))}
+                  className={`px-3 py-2 text-xs rounded-md border ${s.divider} hover:bg-black/5 dark:hover:bg-white/5 transition-colors`}
+                >
+                  {speed}
+                </button>
+              ))}
+            </div>
+
+            {!hasValidCanvasSpeedInput ? (
+              <div className="text-[11px] text-red-600 dark:text-red-400">
+                Enter a speed greater than 0.
+              </div>
+            ) : (
+              <div className={`text-[11px] leading-5 ${s.textSecondary}`}>
+                New waypoints will use {canvasSpeedKts.toFixed(1)} kts. Existing segments keep the speed they were drawn with.
+              </div>
+            )}
+          </div>
+
           {pathPoints.length >= 2 && (
             <div className={`p-4 rounded-xl border ${s.divider} bg-black/5 dark:bg-white/5 space-y-4`}>
               <div className="flex items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
@@ -1069,7 +1253,7 @@ export default function CanvasWorkspacePage() {
               </div>
 
               <div className={`text-[11px] leading-5 ${s.textSecondary}`}>
-                Start and end stay fixed. Intermediate waypoints are redistributed along the current polyline.
+                Start and end stay fixed. Intermediate waypoints are redistributed while preserving the current speed profile.
               </div>
 
               <div className="flex items-center gap-2">
@@ -1115,7 +1299,7 @@ export default function CanvasWorkspacePage() {
                 </div>
               </div>
               
-              <button type="button" onClick={() => { setPathBeforeNodeAdjust(null); setPathPoints((prev) => prev.filter((_, index) => index !== selectedWaypoint)); setSelectedWaypoint(null); }} className={`w-full px-3 py-2 text-sm rounded-md border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center justify-center gap-2`}>
+              <button type="button" onClick={() => { setPathBeforeNodeAdjust(null); setPathSpeedBeforeNodeAdjust(null); setPathPoints((prev) => prev.filter((_, index) => index !== selectedWaypoint)); setPathSpeedKts((prev) => prev.filter((_, index) => index !== selectedWaypoint)); setSelectedWaypoint(null); }} className={`w-full px-3 py-2 text-sm rounded-md border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center justify-center gap-2`}>
                 <Trash2 className="w-4 h-4" />
                 Delete Waypoint
               </button>
