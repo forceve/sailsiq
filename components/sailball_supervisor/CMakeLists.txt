@@ -1,0 +1,1 @@
+idf_component_register(SRCS "src/supervisor.c" "src/progress.c" INCLUDE_DIRS "include" REQUIRES sailball_common sailball_gnss sailball_recorder sailball_storage sailball_transfer sailball_diagnostics freertos esp_system esp_timer heap)

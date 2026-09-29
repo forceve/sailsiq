@@ -1,0 +1,70 @@
+menu "Sailball board configuration"
+
+config SAILBALL_GNSS_SAMPLE_RATE_NUM
+    int "Normalized GNSS sample rate numerator"
+    range 1 10
+    default 10
+
+config SAILBALL_GNSS_SAMPLE_RATE_DEN
+    int "Normalized GNSS sample rate denominator (tuning)"
+    range 1 100
+    default 1
+
+config SAILBALL_BOARD_REVISION
+    string "Hardware revision"
+    default "USER_CONFIRMED_MAP_REVISION_UNSPECIFIED"
+
+config SAILBALL_GNSS_UART1
+    bool "Use UART1 for GNSS"
+    default y
+
+config SAILBALL_GNSS_TX_GPIO
+    int "GNSS UART TX GPIO"
+    range 0 21
+    default 1
+
+config SAILBALL_GNSS_RX_GPIO
+    int "GNSS UART RX GPIO"
+    range 0 21
+    default 0
+
+config SAILBALL_SD_SPI2_HOST
+    bool "Use ESP32-C3 SPI2 host for SD/SDSPI"
+    default y
+
+config SAILBALL_SD_MOSI_GPIO
+    int "SD MOSI GPIO"
+    range 0 21
+    default 5
+
+config SAILBALL_SD_MISO_GPIO
+    int "SD MISO GPIO"
+    range 0 21
+    default 7
+
+config SAILBALL_SD_SCLK_GPIO
+    int "SD SCLK GPIO"
+    range 0 21
+    default 6
+
+config SAILBALL_SD_CS_GPIO
+    int "SD CS GPIO"
+    range 0 21
+    default 4
+
+config SAILBALL_SD_RESERVE_BYTES
+    int "Free space reserve for continuing LDC commits"
+    range 0 1048576
+    default 65536
+
+config SAILBALL_BOOT_GPIO
+    int "BOOT button GPIO"
+    range 0 21
+    default 9
+
+config SAILBALL_LED_GPIO
+    int "WS2818B data GPIO"
+    range 0 21
+    default 8
+
+endmenu

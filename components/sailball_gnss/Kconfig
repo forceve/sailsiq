@@ -1,0 +1,13 @@
+menu "Sailball GNSS runtime target"
+
+config SAILBALL_GNSS_RUNTIME_BAUD
+    int "GNSS runtime UART baud"
+    range 4800 115200
+    default 115200
+
+config SAILBALL_GNSS_UPDATE_RATE_HZ
+    int "GNSS normalized update target (Hz)"
+    range 1 10
+    default 10
+
+endmenu

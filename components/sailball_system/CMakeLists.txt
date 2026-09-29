@@ -1,0 +1,1 @@
+idf_component_register(SRCS "src/system.c" INCLUDE_DIRS "include" REQUIRES sailball_common sailball_board sailball_diagnostics sailball_gnss sailball_recorder sailball_storage sailball_supervisor sailball_transfer sailball_sp sailball_control sailball_usb sailball_ble sailball_wifi sailball_ui nvs_flash esp_system)

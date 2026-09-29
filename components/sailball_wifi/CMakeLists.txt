@@ -1,0 +1,1 @@
+idf_component_register(SRCS "src/wifi.c" INCLUDE_DIRS "include" REQUIRES sailball_common sailball_sp sailball_board sailball_ble sailball_diagnostics sailball_storage nvs_flash esp_wifi esp_event esp_netif lwip)

@@ -1,0 +1,1 @@
+idf_component_register(SRCS "src/storage.c" "src/storage_policy.c" INCLUDE_DIRS "include" REQUIRES sailball_common sailball_board sailball_diagnostics sailball_ldc freertos fatfs esp_driver_sdspi esp_driver_spi sdmmc esp_system)

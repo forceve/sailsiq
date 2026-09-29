@@ -1,0 +1,1 @@
+idf_component_register(SRCS "src/gnss.c" "src/nmea_parser.c" "src/atgm336h_backend.c" INCLUDE_DIRS "include" REQUIRES sailball_common sailball_board sailball_diagnostics freertos esp_system PRIV_REQUIRES esp_driver_uart)

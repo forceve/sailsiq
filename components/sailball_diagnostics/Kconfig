@@ -1,0 +1,11 @@
+menu "Sailball diagnostics"
+
+config SAILBALL_VALIDATION_METRICS
+    bool "Enable validation-only heap and stack metrics"
+    default n
+    help
+        Track application task stack low-water marks and internal heap
+        low-water/current fragmentation metrics during board validation.
+        These metrics are not exposed by the Sailball Protocol.
+
+endmenu

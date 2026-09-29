@@ -1,0 +1,18 @@
+menu "Sailball supervisor tuning"
+
+config SAILBALL_PROGRESS_GNSS_STALL_MS
+    int "GNSS receive progress timeout (ms)"
+    range 1000 300000
+    default 5000
+
+config SAILBALL_PROGRESS_GNSS_RESTART_INTERVAL_MS
+    int "GNSS local restart interval (ms)"
+    range 5000 600000
+    default 30000
+
+config SAILBALL_PROGRESS_COMMIT_GRACE_MS
+    int "Storage commit progress grace period (ms)"
+    range 5000 120000
+    default 30000
+
+endmenu

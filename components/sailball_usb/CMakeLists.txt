@@ -1,0 +1,1 @@
+idf_component_register(SRCS "src/usb.c" "src/transport_task.c" INCLUDE_DIRS "include" REQUIRES sailball_common sailball_board sailball_diagnostics sailball_sp sailball_control sailball_ble sailball_wifi sailball_transfer sailball_storage esp_driver_usb_serial_jtag freertos)

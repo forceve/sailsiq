@@ -26,3 +26,20 @@
 **/*.py[cod]
 **/*$py.class
 
+# Sailball ESP-IDF project generated files
+build/
+sdkconfig
+sdkconfig.old
+sdkconfig.dev
+sdkconfig.validation
+sdkconfig.production
+managed_components/
+.vscode/
+__pycache__/
+*.pyc
+*.elf
+*.bin
+*.map
+*.log
+# Root-level compiler objects from one-off host builds
+/*.obj
