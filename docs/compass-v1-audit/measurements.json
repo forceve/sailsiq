@@ -1,0 +1,105 @@
+{
+  "source": "D:\\sailbleu\\sailsiq\\\u786c\u4ef6\\trace-compass\\v1\\trace_compass_v1_enclosure.py",
+  "parts": {
+    "shell": {
+      "valid": true,
+      "volume_mm3": 64156.651390635074,
+      "bbox": {
+        "xmin": -56.0,
+        "xmax": 56.0,
+        "ymin": -43.0,
+        "ymax": 43.0,
+        "zmin": -0.0,
+        "zmax": 18.0
+      }
+    },
+    "panel": {
+      "valid": true,
+      "volume_mm3": 13466.431225497758,
+      "bbox": {
+        "xmin": -53.0,
+        "xmax": 53.0,
+        "ymin": -40.0,
+        "ymax": 40.0,
+        "zmin": 16.4,
+        "zmax": 18.0
+      }
+    },
+    "adhesive": {
+      "valid": true,
+      "volume_mm3": 473.92144684322795,
+      "bbox": {
+        "xmin": -52.45,
+        "xmax": 52.45,
+        "ymin": -39.45,
+        "ymax": 39.45,
+        "zmin": 16.05,
+        "zmax": 16.4
+      }
+    },
+    "lcd": {
+      "valid": true,
+      "volume_mm3": 13494.383134833024,
+      "bbox": {
+        "xmin": -49.85,
+        "xmax": 49.85,
+        "ymin": -34.67,
+        "ymax": 34.67,
+        "zmin": 13.99,
+        "zmax": 15.95
+      }
+    },
+    "buttons": {
+      "valid": true,
+      "volume_mm3": 348.71678454846705,
+      "bbox": {
+        "xmin": -28.5,
+        "xmax": 28.5,
+        "ymin": 40.2,
+        "ymax": 47.2,
+        "zmin": 5.7,
+        "zmax": 12.7
+      }
+    },
+    "display": {
+      "valid": true,
+      "volume_mm3": 1292.9337785912153,
+      "bbox": {
+        "xmin": -42.4,
+        "xmax": 42.4,
+        "ymin": -31.8,
+        "ymax": 31.8,
+        "zmin": 18.12,
+        "zmax": 18.36
+      }
+    }
+  },
+  "intersections_mm3": {
+    "shell/lcd": 476.391438,
+    "shell/panel": 276.424713,
+    "shell/adhesive": 159.692063,
+    "shell/buttons": 124.407069,
+    "panel/adhesive": 0.0
+  },
+  "nominal": {
+    "opening_mm": [
+      96.0,
+      70.0
+    ],
+    "lcd_mm": [
+      99.7,
+      69.34,
+      1.96
+    ],
+    "pcb_bottom_z": 4.6,
+    "support_top_z": 3.65,
+    "support_gap_mm": 0.9499999999999997,
+    "retaining_rib_to_board_lateral_gap_mm": 0.6000000000000001,
+    "button_hole_y_end": 39.2,
+    "cavity_top_y": 35.0,
+    "button_blind_wall_remaining_mm": 4.200000000000003,
+    "silicone_inner_end_y": 40.2,
+    "adhesive_bottom_z": 16.049999999999997,
+    "recess_floor_z": 16.15
+  }
+}

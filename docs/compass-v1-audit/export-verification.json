@@ -1,0 +1,22 @@
+{
+  "one_piece_shell": {
+    "exported_valid": true,
+    "symmetric_difference_mm3": 0.0,
+    "matches_at_1e-4_mm3": true
+  },
+  "bonded_front_panel": {
+    "exported_valid": true,
+    "symmetric_difference_mm3": 0.0,
+    "matches_at_1e-4_mm3": true
+  },
+  "continuous_panel_adhesive_seal": {
+    "exported_valid": true,
+    "symmetric_difference_mm3": 0.0,
+    "matches_at_1e-4_mm3": true
+  },
+  "top_edge_silicone_buttons": {
+    "exported_valid": true,
+    "symmetric_difference_mm3": 0.0,
+    "matches_at_1e-4_mm3": true
+  }
+}

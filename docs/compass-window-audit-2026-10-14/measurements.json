@@ -1,0 +1,117 @@
+{
+  "source": "source.png",
+  "method": "manual outer/display-face corners; perspective mapping to 67.6 x 91 mm",
+  "outer_corners_pixels": [
+    [
+      383.0,
+      167.0
+    ],
+    [
+      903.0,
+      169.0
+    ],
+    [
+      893.0,
+      855.0
+    ],
+    [
+      390.0,
+      855.0
+    ]
+  ],
+  "display_face_corners_pixels": [
+    [
+      399.0,
+      181.0
+    ],
+    [
+      887.0,
+      183.0
+    ],
+    [
+      879.0,
+      823.0
+    ],
+    [
+      404.0,
+      822.0
+    ]
+  ],
+  "perspective_matrix": [
+    [
+      0.1283423902237388,
+      -0.0013058092028578106,
+      -48.937065318814696
+    ],
+    [
+      -0.0004872041650434715,
+      0.12667308291130353,
+      -20.96780565097604
+    ],
+    [
+      -5.353891923554874e-06,
+      -4.7070493693355174e-05,
+      1.0
+    ]
+  ],
+  "photo_face_mm": [
+    63.60881411494273,
+    84.76171594494467
+  ],
+  "photo_border_portrait_mm": {
+    "left": 1.9876864061593924,
+    "right": 2.003499478897865,
+    "top_non_fpc": 1.7949939357170233,
+    "bottom_fpc": 4.4432901193383145
+  },
+  "display_centre_offset_from_module_centre_mm": [
+    -0.007906536369233663,
+    -1.324148091810649
+  ],
+  "current_window_landscape_mm": [
+    88,
+    66
+  ],
+  "current_remaining_module_cover_portrait_mm": {
+    "left": 0.7920934636307635,
+    "right": 0.8079065363692308,
+    "top_non_fpc": 0.17585190818935104,
+    "bottom_fpc": 2.824148091810656
+  },
+  "candidate_window_landscape_mm": [
+    86.4,
+    65.2
+  ],
+  "candidate_remaining_module_cover_portrait_mm": {
+    "left": 1.192093463630762,
+    "right": 1.2079065363692223,
+    "top_non_fpc": 0.9758519081893482,
+    "bottom_fpc": 3.624148091810639
+  },
+  "geometric_clipping_onset_degrees_landscape_xy": {
+    "v2_nominal": [
+      44.91061508107474,
+      36.7841255848969
+    ],
+    "v2_at_0p75mm_float": [
+      27.905471371454553,
+      15.662106345326047
+    ],
+    "narrow_window_at_original_gap": [
+      26.493610092514142,
+      26.493610092514142
+    ],
+    "candidate_small_gap_and_tight_location": [
+      47.72631099390627,
+      47.72631099390627
+    ]
+  },
+  "limits": [
+    "Face boundary estimated, not pixel AA metrology. Border estimates report approximately +/-0.3 to 0.5 mm visual uncertainty, not a statistical tolerance.",
+    "Photo shows bare 91 x 67.6 mm module plus FPC, not the earlier 99.7 x 69.34 mm carrier PCB.",
+    "Perspective correction assumes planar rectangle and trustworthy printed dimensions.",
+    "Sightline model is an air-gap geometric estimate to inner lens mask, not an LCD viewing-angle or optical qualification.",
+    "Current 1.95 mm PCB offset cannot be transferred directly to bare-module placement.",
+    "Candidate dimensions are a proposal; no product CAD files modified."
+  ]
+}
