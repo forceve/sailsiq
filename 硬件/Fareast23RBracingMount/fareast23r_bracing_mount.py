@@ -9,9 +9,15 @@ import sys
 import cadquery as cq
 import ezdxf
 
+MASTS_DIR = Path(__file__).resolve().parents[2] / "Masts"
+if str(MASTS_DIR) not in sys.path:
+    sys.path.insert(0, str(MASTS_DIR))
+from mast_section import SELDEN_C as SECTION, envelope_points, envelope_solid, envelope_wire, hollow_mast, right_x_at_y
+import tree_bracing as tree
+
 
 OUT_DIR = Path(__file__).resolve().parent / "cadquery_out"
-ENCLOSURE_DIR = Path(__file__).resolve().parents[1] / "澶栧３"
+ENCLOSURE_DIR = Path(__file__).resolve().parents[1] / "外壳"
 
 
 @dataclass(frozen=True)
@@ -19,26 +25,26 @@ class Params:
     # Coordinate system:
     # X = port/starboard width of the section, Y = fore/aft depth,
     # Z = mast length. The guide rail / luff groove is on +Y.
-    # Reference C126 section from the 2006 C-section chart.
-    # The chart lists fore/aft depth first, then side width: 126 / 79.
+    # Seldén catalogue section dimensions; boat-to-section assignment still
+    # requires the physical Mast ID. See Masts/SPECS.md.
     mast_length: float = 700.0
     mast_outer_w: float = 79.0
     mast_outer_h: float = 126.0
-    mast_wall: float = 2.5
+    mast_wall: float = 2.4
 
-    # Luff groove / guide rail proportions inferred from the drawing top feature.
-    rail_chamber_w: float = 24.0
-    rail_chamber_h: float = 20.0
-    rail_mouth_w: float = 12.0
-    rail_chamber_drop_from_top: float = 4.5
+    # Chamber is estimated from the generic C-section illustration.
+    # Only the 5 mm mouth and nominal wall are catalogue dimensions.
+    rail_chamber_w: float = 19.0 * 79.0 / 79.0
+    rail_chamber_h: float = 21.2 * 126.0 / 126.0
+    rail_mouth_w: float = 5.0
 
     # Assembly station: mounted 100 mm down from the top of a 700 mm mast.
     mount_from_top: float = 100.0
 
     # Semi-bracing mount concept.
-    silicone_gap: float = 5.0
+    silicone_gap: float = 3.0  # Uncompressed thickness normal to the mast envelope.
     front_bracing_side_t: float = 3.6
-    front_bracing_apex_t: float = 1.8
+    front_bracing_apex_t: float = 1.8  # Legacy sketch helper; not the active wall or panel offset
     bracing_tail_angle: float = 0.28
     bracing_tail_extension_len: float = 3.0
     bracing_tail_tip_t: float = 1.0
@@ -51,6 +57,8 @@ class Params:
     strap_front_clear_fraction: float = 1.0 / 3.0
     strap_cut_clearance: float = 0.35
 
+    # Legacy connector dimensions below remain for old sketch helpers only.
+    # Active tree geometry and panel station are defined in Masts/tree_bracing.py.
     # Device side plate and clamp cover.
     plate_w: float = 166.0
     plate_h: float = 128.0
@@ -98,7 +106,7 @@ class Params:
 
     @property
     def bracket_z_h(self) -> float:
-        return self.plate_h
+        return tree.DESIGN.saddle_height
 
     @property
     def front_bracing_inner_rx(self) -> float:
@@ -114,7 +122,7 @@ class Params:
 
     @property
     def plate_back_y(self) -> float:
-        return self.front_bracing_outer_ry + self.plate_standoff_y
+        return tree.plate_back_y(self)
 
     @property
     def device_back_y(self) -> float:
@@ -196,7 +204,7 @@ def load_device_enclosure_module():
 
 
 def load_j80_bracing_module():
-    j80_path = str(Path(__file__).resolve().parents[1] / "J80桅杆支架")
+    j80_path = str(Path(__file__).resolve().parents[1] / "J80BracingMount")
     if j80_path not in sys.path:
         sys.path.insert(0, j80_path)
     return import_module("j80_mast_bracing_mount")
@@ -232,56 +240,24 @@ def _append_curve(
 
 
 def c_section_outline_points(rx: float, ry: float) -> list[tuple[float, float]]:
-    # Normalized Bezier trace of the reference picture, clockwise from the
-    # right top lip around the body to the left top lip.
-    right_top = (rx * 0.15, ry * 1.0)
-    right: list[tuple[float, float]] = [right_top]
-
-    # Very flat top, tight corner
-    _append_curve(right, right[-1], (rx * 0.40, ry * 0.98), (rx * 0.60, ry * 0.95), (rx * 0.75, ry * 0.85), 10)
-
-    # Straight-ish upper side
-    _append_curve(right, right[-1], (rx * 0.85, ry * 0.75), (rx * 0.95, ry * 0.50), (rx * 0.98, ry * 0.20), 14)
-
-    # Max width area (almost flat vertically)
-    _append_curve(right, right[-1], (rx * 1.00, ry * 0.0), (rx * 1.00, ry * -0.20), (rx * 0.98, ry * -0.40), 10)
-
-    # Lower curve tapering
-    _append_curve(right, right[-1], (rx * 0.95, ry * -0.60), (rx * 0.85, ry * -0.80), (rx * 0.65, ry * -0.92), 14)
-
-    # Bottom rounding
-    _append_curve(right, right[-1], (rx * 0.45, ry * -0.98), (rx * 0.25, ry * -1.00), (0.0, ry * -1.000), 14)
-
-    left = [(-x, y) for x, y in reversed(right[:-1])]
-    return right + left
+    return envelope_points(2.0 * rx, 2.0 * ry)
 
 
-def c_section_right_x_at_y(rx: float, ry: float, y: float) -> float:
-    points = c_section_outline_points(rx, ry)
-    right = points[: (len(points) + 1) // 2]
-    if y >= right[0][1]:
-        return right[0][0]
-    if y <= right[-1][1]:
-        return right[-1][0]
-
-    for p0, p1 in zip(right, right[1:]):
-        y0 = p0[1]
-        y1 = p1[1]
-        if y0 >= y >= y1:
-            span = y1 - y0
-            t = 0.0 if abs(span) < 1e-9 else (y - y0) / span
-            return p0[0] + (p1[0] - p0[0]) * t
-    return right[-1][0]
+def c_section_right_x_at_y(rx: float, ry: float, y: float, offset: float = 0.0) -> float:
+    return right_x_at_y(2.0 * rx, 2.0 * ry, y, offset)
 
 
 def c_section_profile_solid(rx: float, ry: float, z_h: float) -> cq.Workplane:
-    return cq.Workplane("XY").polyline(c_section_outline_points(rx, ry)).close().extrude(z_h)
+    return envelope_solid(2.0 * rx, 2.0 * ry, z_h)
 
 
-def c_section_ring(rx: float, ry: float, t: float, z_h: float, z_center: float) -> cq.Workplane:
-    outer = c_section_profile_solid(rx + t, ry + t, z_h)
-    inner = c_section_profile_solid(rx, ry, z_h + 2.0).translate((0, 0, -1.0))
-    return outer.cut(inner).translate((0, 0, z_center - z_h / 2.0))
+def c_section_ring(
+    rx: float, ry: float, t: float, z_h: float, z_center: float, offset: float = 0.0,
+) -> cq.Workplane:
+    outer = envelope_wire(2.0 * rx, 2.0 * ry, offset + t)
+    inner = envelope_wire(2.0 * rx, 2.0 * ry, offset)
+    ring = cq.Solid.extrudeLinear(outer, [inner], (0, 0, z_h))
+    return cq.Workplane("XY").add(ring).translate((0, 0, z_center - z_h / 2.0))
 
 
 def ellipse_ring(rx: float, ry: float, t: float, z_h: float, z_center: float) -> cq.Workplane:
@@ -319,20 +295,13 @@ def front_bracing_outer_point_at_angle(p: Params, angle: float) -> tuple[float, 
 
 
 def strap_inner_radii(p: Params = P) -> tuple[float, float]:
-    return (
-        p.front_bracing_inner_rx + p.front_bracing_side_t + 0.7 - p.strap_radius_reduction,
-        p.front_bracing_outer_ry + 0.7 - p.strap_radius_reduction,
-    )
+    clearance = p.silicone_gap + p.front_bracing_side_t + tree.DESIGN.strap_running_clearance
+    return p.outer_rx + clearance, p.outer_ry + clearance
 
 
 def strap_forward_y_offset(p: Params = P) -> float:
-    clear_half_angle = pi * p.strap_front_clear_fraction
-    boundary_angle = max(0.0, pi / 2.0 - clear_half_angle)
-    strap_rx, strap_ry = strap_inner_radii(p)
-    brace_x, brace_y = front_bracing_outer_point_at_angle(p, boundary_angle)
-    if abs(brace_x) >= strap_rx:
-        return 0.0
-    return max(0.0, brace_y - strap_ry * sqrt(1.0 - (brace_x / strap_rx) ** 2))
+    # The strap follows the actual normal-offset C-section, with no ellipse shift.
+    return 0.0
 
 
 def front_bracing_outer_point(p: Params, angle: float, tail_angle: float) -> tuple[float, float]:
@@ -502,69 +471,10 @@ def make_strap_slot_cutters(p: Params = P) -> cq.Workplane:
 
 
 def make_mast(p: Params = P) -> cq.Workplane:
-    outer = c_section_profile_solid(p.outer_rx, p.outer_ry, p.mast_length)
-    inner = c_section_profile_solid(
-        p.outer_rx - p.mast_wall,
-        p.outer_ry - p.mast_wall,
-        p.mast_length + 2.0,
-    ).translate((0, 0, -1.0))
-    mast = outer.cut(inner)
-
-    # Cut mouth
-    mouth_bottom_y = p.outer_ry - p.rail_chamber_drop_from_top
-    mouth_h = p.outer_ry - mouth_bottom_y + 2.0
-    mouth = (
-        cq.Workplane("XY")
-        .rect(p.rail_mouth_w, mouth_h)
-        .extrude(p.mast_length + 2.0)
-        .translate((0, mouth_bottom_y + mouth_h / 2.0, -1.0))
+    return hollow_mast(
+        p.mast_outer_w, p.mast_outer_h, p.mast_length, p.mast_wall,
+        p.rail_chamber_w, p.rail_chamber_h, p.rail_mouth_w,
     )
-    mast = mast.cut(mouth)
-
-    # Add rounded lips
-    lip_r = p.mast_wall / 2.0
-    lip_x = p.rail_mouth_w / 2.0 + lip_r
-    lip_y = p.outer_ry - lip_r
-    for sign in (-1.0, 1.0):
-        lip = (
-            cq.Workplane("XY")
-            .circle(lip_r)
-            .extrude(p.mast_length)
-            .translate((sign * lip_x, lip_y, 0))
-        )
-        mast = mast.union(lip)
-
-    # Add track walls (U-shape)
-    y_top = p.outer_ry + 2.0
-    y_bot_in = p.outer_ry - p.rail_chamber_drop_from_top - p.rail_chamber_h
-    y_bot_out = y_bot_in - p.mast_wall
-    x_in = p.rail_chamber_w / 2.0
-    x_out = x_in + p.mast_wall
-    flange_x = x_out + 2.5
-
-    track_pts = [
-        (x_out, y_top),
-        (x_out, y_bot_in),
-        (flange_x, y_bot_in),
-        (flange_x, y_bot_out),
-        (-flange_x, y_bot_out),
-        (-flange_x, y_bot_in),
-        (-x_out, y_bot_in),
-        (-x_out, y_top),
-        (-x_in, y_top),
-        (-x_in, y_bot_in),
-        (x_in, y_bot_in),
-        (x_in, y_top)
-    ]
-
-    track = cq.Workplane("XY").polyline(track_pts).close().extrude(p.mast_length)
-    track = _safe_fillet(track, "|Z", 1.0)
-
-    # Union track with mast, then cut inner again to trim track top flush with inner shell
-    mast = mast.union(track)
-    mast = mast.cut(inner)
-
-    return mast
 
 
 def make_front_silicone_padding(p: Params = P) -> cq.Workplane:
@@ -596,7 +506,10 @@ def make_elastic_strap_loops(
     strap_y = strap_forward_y_offset(p)
     for dz in (-p.strap_spacing / 2.0, p.strap_spacing / 2.0):
         z = p.mount_center_z + dz
-        strap = ellipse_ring(strap_inner_rx, strap_inner_ry, strap_t, strap_z_w, z)
+        strap = c_section_ring(
+            p.outer_rx, p.outer_ry, strap_t, strap_z_w, z,
+            offset=strap_inner_rx - p.outer_rx,
+        )
         strap = strap.translate((0, strap_y, 0))
         straps = strap if straps is None else straps.union(strap)
     return straps if straps is not None else cq.Workplane("XY")
@@ -609,11 +522,12 @@ def make_strap_material_cutters(p: Params = P) -> cq.Workplane:
 def make_front_bracing_shell(p: Params = P) -> cq.Workplane:
     y_min = -p.front_bracing_inner_ry * 0.18
     brace = c_section_ring(
-        p.front_bracing_inner_rx,
-        p.front_bracing_inner_ry,
+        p.outer_rx,
+        p.outer_ry,
         p.front_bracing_side_t,
         p.bracket_z_h,
         p.mount_center_z,
+        offset=p.silicone_gap,
     )
     brace = clip_y_band(
         brace,
@@ -624,7 +538,6 @@ def make_front_bracing_shell(p: Params = P) -> cq.Workplane:
         x_span=(p.front_bracing_inner_rx + p.front_bracing_side_t + 6.0) * 2.0,
     )
     brace = brace.union(make_front_bracing_tail_extensions(p, y_min))
-    brace = brace.cut(make_strap_material_cutters(p))
     brace = _safe_fillet(brace, "|Z", 0.25)
     return brace
 
@@ -642,10 +555,11 @@ def make_front_bracing_tail_extensions(p: Params = P, y_start: float | None = No
         for i in range(samples + 1):
             t = i / samples
             y = y0 + (y1 - y0) * t
-            x_inner = c_section_right_x_at_y(p.front_bracing_inner_rx, p.front_bracing_inner_ry, y)
+            x_inner = c_section_right_x_at_y(p.outer_rx, p.outer_ry, y, p.silicone_gap)
             thickness = p.front_bracing_side_t + (p.bracing_tail_tip_t - p.front_bracing_side_t) * t
             inner.append((sign * x_inner, y))
-            outer.append((sign * (x_inner + thickness), y))
+            x_outer = c_section_right_x_at_y(p.outer_rx, p.outer_ry, y, p.silicone_gap + thickness)
+            outer.append((sign * x_outer, y))
 
         profile = inner + list(reversed(outer))
         tail = (
@@ -655,6 +569,12 @@ def make_front_bracing_tail_extensions(p: Params = P, y_start: float | None = No
             .extrude(p.bracket_z_h)
             .translate((0, 0, p.mount_center_z - p.bracket_z_h / 2.0))
         )
+        # Polygon chords at the tapered tips slightly intrude into the exact
+        # offset envelope. Trim them back to the true mast/padding surface.
+        contact_envelope = envelope_solid(
+            p.mast_outer_w, p.mast_outer_h, p.bracket_z_h + 2.0, p.silicone_gap,
+        ).translate((0, 0, p.mount_center_z - p.bracket_z_h / 2.0 - 1.0))
+        tail = tail.cut(contact_envelope)
         tails = tail if tails is None else tails.union(tail)
 
     return tails if tails is not None else cq.Workplane("XY")
@@ -674,67 +594,13 @@ def make_velcro_overlap_pads(p: Params = P) -> cq.Workplane:
     return pads if pads is not None else cq.Workplane("XY")
 
 
+def make_tree_bracing_connector(p: Params = P) -> cq.Workplane:
+    return tree.make_connector(sys.modules[__name__], p)
+
+
 def make_bracing_to_panel_connector_plates(p: Params = P) -> cq.Workplane:
-    y0 = -p.connector_bracing_overlap_y
-    y1 = p.plate_back_y + p.connector_panel_overlap_y
-    depth = y1 - y0
-    center_y = (y0 + y1) / 2.0
-    x_center = p.front_bracing_inner_rx + p.front_bracing_side_t + p.connector_plate_t / 2.0 - 1.6
-
-    plates: cq.Workplane | None = None
-    for sign in (-1.0, 1.0):
-        plate = box_at(
-            sign * x_center,
-            center_y,
-            p.mount_center_z,
-            p.connector_plate_t,
-            depth,
-            p.bracket_z_h,
-        )
-        plates = plate if plates is None else plates.union(plate)
-
-    connector = plates if plates is not None else cq.Workplane("XY")
-    connector = connector.cut(make_strap_slot_cutters(p))
-    connector = connector.cut(make_strap_material_cutters(p))
-    connector = _safe_fillet(connector, "|Z", 0.35)
-    return connector
-
-
-def make_bracing_panel_transition_nodes(p: Params = P) -> cq.Workplane:
-    return make_bracing_to_panel_connector_plates(p)
-
-
-def make_bracing_panel_transition_blocks(p: Params = P) -> cq.Workplane:
-    nodes: cq.Workplane | None = None
-    x_center = p.front_bracing_inner_rx + p.front_bracing_side_t + p.connector_plate_t / 2.0 - 1.6
-    for sign in (-1.0, 1.0):
-        bracing_node = box_at(
-            sign * x_center,
-            p.connector_corner_pad_y / 2.0 - p.connector_bracing_overlap_y,
-            p.mount_center_z,
-            p.connector_corner_pad_x,
-            p.connector_corner_pad_y,
-            p.bracket_z_h,
-        )
-        panel_node = box_at(
-            sign * x_center,
-            p.plate_back_y - p.connector_corner_pad_y / 2.0 + p.plate_t,
-            p.mount_center_z,
-            p.connector_corner_pad_x,
-            p.connector_corner_pad_y,
-            p.bracket_z_h,
-        )
-        nodes = bracing_node if nodes is None else nodes.union(bracing_node)
-        nodes = nodes.union(panel_node)
-    result = nodes if nodes is not None else cq.Workplane("XY")
-    result = result.cut(make_strap_slot_cutters(p))
-    result = result.cut(make_strap_material_cutters(p))
-    result = _safe_fillet(result, "|Z", 0.5)
-    return result
-
-
-def make_rail_side_bracing_spine(p: Params = P) -> cq.Workplane:
-    return make_bracing_to_panel_connector_plates(p)
+    """Compatibility entry point; the generated part is now a tree connector."""
+    return make_tree_bracing_connector(p)
 
 
 def clamp_screw_positions(p: Params = P) -> tuple[tuple[float, float], ...]:
@@ -766,7 +632,7 @@ def make_mounting_plate(p: Params = P) -> cq.Workplane:
             p.plate_t + 2.0,
         )
         plate = plate.cut(cutter)
-    return plate
+    return tree.relieve_panel(plate, p)
 
 
 def make_acrylic_cover_plate(
@@ -856,15 +722,12 @@ def export_acrylic_cover_plate_without_screen_window_top_dxf(p: Params = P) -> N
 
 
 def make_integrated_fixed_panel_bracing(p: Params = P) -> cq.Workplane:
-    bracket = make_front_bracing_shell(p)
-    bracket = bracket.union(make_rail_side_bracing_spine(p))
-    bracket = bracket.union(make_mounting_plate(p))
-    return bracket
+    return tree.make_integrated_bracket(sys.modules[__name__], p)
 
 
 def make_clamp_screw_references(p: Params = P) -> cq.Workplane:
     screws: cq.Workplane | None = None
-    shaft_y = p.plate_back_y - 0.3
+    shaft_y = p.plate_back_y - tree.DESIGN.screw_reference_setback - 0.3
     shaft_h = p.cover_front_y - shaft_y + 0.3
     for x, dz in clamp_screw_positions(p):
         z = p.mount_center_z + dz
@@ -940,10 +803,11 @@ def add_part(
 def make_assembly(p: Params = P) -> cq.Assembly:
     asm = cq.Assembly(name="Fareast23R_mast_semi_bracing_mount_assembly")
     add_part(asm, make_mast(p), "fareast23r_mast_700mm_with_guide_rail", (0.58, 0.60, 0.62, 0.50))
-    add_part(asm, make_front_silicone_padding(p), "front_5mm_silicone_padding", (0.94, 0.70, 0.33, 0.58))
+    add_part(asm, make_front_silicone_padding(p), f"front_{p.silicone_gap:g}mm_silicone_padding", (0.94, 0.70, 0.33, 0.58))
     add_part(asm, make_integrated_fixed_panel_bracing(p), "integrated_fixed_panel_and_tapered_bracing", (0.05, 0.07, 0.08, 1.0))
     add_part(asm, make_back_elastic_straps(p), "complete_elastic_strap_loops", (0.08, 0.42, 1.0, 0.45))
     add_part(asm, make_velcro_overlap_pads(p), "velcro_overlap_reference_pads", (0.12, 0.12, 0.12, 1.0))
+    add_part(asm, tree.rope_reference(p), "cunningham_two_side_rope_references_unmeasured", (0.92, 0.35, 0.08, 0.7))
     for name, obj, color in make_device_reference_parts(p):
         add_part(asm, obj, name, color)
     add_part(asm, make_acrylic_cover_plate(p), "clear_acrylic_clamp_cover_plate", (0.55, 0.78, 0.88, 0.38))
@@ -958,7 +822,7 @@ def make_j80_bracing_on_current_mast_assembly(p: Params = P) -> cq.Assembly:
     asm = cq.Assembly(name="Fareast23R_C126_mast_with_J80_bracing_reference")
     add_part(asm, make_mast(p), "fareast23r_c126_mast_reference", (0.58, 0.60, 0.62, 0.45))
     add_part(asm, j80.make_mast(jp), "j80_original_mast_translucent_reference", (0.92, 0.42, 0.22, 0.18))
-    add_part(asm, j80.make_front_silicone_padding(jp), "j80_front_5mm_silicone_padding", (0.94, 0.70, 0.33, 0.52))
+    add_part(asm, j80.make_front_silicone_padding(jp), f"j80_front_{jp.silicone_gap:g}mm_silicone_padding", (0.94, 0.70, 0.33, 0.52))
     add_part(asm, j80.make_integrated_fixed_panel_bracing(jp), "j80_integrated_fixed_panel_and_tapered_bracing", (0.05, 0.07, 0.08, 1.0))
     add_part(asm, j80.make_back_elastic_straps(jp), "j80_complete_elastic_strap_loops", (0.08, 0.42, 1.0, 0.42))
     add_part(asm, j80.make_velcro_overlap_pads(jp), "j80_velcro_overlap_reference_pads", (0.12, 0.12, 0.12, 1.0))
@@ -970,7 +834,7 @@ def make_j80_bracing_on_current_mast_assembly(p: Params = P) -> cq.Assembly:
     return asm
 
 
-def export_all(p: Params = P) -> None:
+def export_all(p: Params = P, *, include_cross_boat_reference: bool = True) -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     stale_transition_nodes = OUT_DIR / "fareast23r_bracing_panel_transition_nodes.step"
     if stale_transition_nodes.exists():
@@ -980,10 +844,17 @@ def export_all(p: Params = P) -> None:
         stale_tail_extensions.unlink()
 
     cq.exporters.export(make_mast(p), str(OUT_DIR / "fareast23r_mast_700mm_from_section.step"))
+    cq.exporters.export(make_front_silicone_padding(p), str(OUT_DIR / "fareast23r_front_silicone_padding.step"))
     cq.exporters.export(make_front_bracing_shell(p), str(OUT_DIR / "fareast23r_rail_side_semi_bracing_saddle.step"))
     cq.exporters.export(make_back_elastic_straps(p), str(OUT_DIR / "fareast23r_rear_elastic_strap_bands.step"))
-    cq.exporters.export(make_bracing_to_panel_connector_plates(p), str(OUT_DIR / "fareast23r_bracing_to_panel_3mm_connector_plates.step"))
-    cq.exporters.export(make_bracing_to_panel_connector_plates(p), str(OUT_DIR / "fareast23r_fixed_panel_to_bracing_transition_web.step"))
+    cq.exporters.export(make_tree_bracing_connector(p), str(OUT_DIR / "fareast23r_tree_bracing_connector.step"), opt={"precision_mode": 1})
+    cq.exporters.export(tree.make_strap_guides(p, SECTION), str(OUT_DIR / "fareast23r_strap_locator_rails.step"))
+    cq.exporters.export(make_integrated_fixed_panel_bracing(p), str(OUT_DIR / "fareast23r_tree_bracing_mount.step"), opt={"precision_mode": 1})
+    tree.export_native_shape(make_integrated_fixed_panel_bracing(p), OUT_DIR / "fareast23r_tree_bracing_mount.brep")
+    tree.export_native_shape(make_tree_bracing_connector(p), OUT_DIR / "fareast23r_tree_bracing_connector.brep")
+    tree.export_print_mesh(make_integrated_fixed_panel_bracing(p), OUT_DIR / "fareast23r_tree_bracing_mount.stl")
+    cq.exporters.export(tree.rope_envelope(p), str(OUT_DIR / "fareast23r_cunningham_side_clearance_envelopes.step"))
+    cq.exporters.export(tree.rope_reference(p), str(OUT_DIR / "fareast23r_cunningham_rope_references.step"))
     cq.exporters.export(make_mounting_plate(p), str(OUT_DIR / "fareast23r_device_mounting_plate.step"))
     cq.exporters.export(make_acrylic_cover_plate(p), str(OUT_DIR / "fareast23r_clear_acrylic_clamp_cover_plate.step"))
     cq.exporters.export(
@@ -992,11 +863,16 @@ def export_all(p: Params = P) -> None:
     )
     export_acrylic_cover_plate_without_screen_window_top_dxf(p)
     cq.exporters.export(make_clamp_screw_references(p), str(OUT_DIR / "fareast23r_six_m3_clamp_screw_references.step"))
-    cq.exporters.export(make_integrated_fixed_panel_bracing(p), str(OUT_DIR / "fareast23r_integrated_fixed_panel_and_tapered_bracing.step"))
+    cq.exporters.export(make_integrated_fixed_panel_bracing(p), str(OUT_DIR / "fareast23r_integrated_fixed_panel_and_tapered_bracing.step"), opt={"precision_mode": 1})
     make_assembly(p).save(str(OUT_DIR / "fareast23r_mast_700mm_semi_bracing_mount_assembly.step"))
-    make_j80_bracing_on_current_mast_assembly(p).save(
-        str(OUT_DIR / "fareast23r_c126_mast_with_j80_bracing_reference_assembly.step")
-    )
+    # Remove obsolete generated connector names only after successful export.
+    for suffix in ("bracing_to_panel_3mm_connector_plates", "fixed_panel_to_bracing_transition_web"):
+        (OUT_DIR / f"fareast23r_{suffix}.step").unlink(missing_ok=True)
+
+    if include_cross_boat_reference:
+        make_j80_bracing_on_current_mast_assembly(p).save(
+            str(OUT_DIR / "fareast23r_c126_mast_with_j80_bracing_reference_assembly.step")
+        )
 
 
 if __name__ == "__main__":
