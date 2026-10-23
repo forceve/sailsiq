@@ -56,6 +56,7 @@ static ui_model_t s_model;
 static bool s_has_external_model = false;
 static ui_page_t s_previous_main_page = UI_PAGE_COMPASS;
 static uint8_t s_settings_selection = 0;
+static bool s_bow_editing = false;
 static uint8_t s_layout_selection = 0;
 static bool s_layout_editing = false;
 static uint8_t s_calibration_selection = 0;
@@ -309,7 +310,9 @@ static void handle_page_button(ui_press_t press) {
             ui_set_page(s_previous_main_page);
         } else if (page == UI_PAGE_SETTINGS || page == UI_PAGE_CALIBRATION) {
             s_layout_editing = false;
+            s_bow_editing = false;
             screens_set_layout_editing(false);
+            screens_set_bow_editing(false);
             s_layout_selection = screens_layout_get_selection();
             ui_set_page(s_previous_main_page);
         } else {
@@ -328,7 +331,12 @@ static void handle_page_button(ui_press_t press) {
         } else if (page == UI_PAGE_CALIBRATION) {
             ui_set_page(UI_PAGE_SETTINGS);
         } else if (page == UI_PAGE_SETTINGS) {
-            ui_set_page(s_previous_main_page);
+            if (s_bow_editing) {
+                s_bow_editing = false;
+                screens_set_bow_editing(false);
+            } else {
+                ui_set_page(s_previous_main_page);
+            }
         } else {
             page_next_main();
         }
@@ -364,6 +372,9 @@ static void handle_action_button(ui_press_t press) {
                 s_model.start.race_mode = s_model.start.race_mode == RACE_FLEET ? RACE_MATCH : RACE_FLEET;
                 screens_update(&s_model);
             }
+        } else if (s_settings_selection == 1) {
+            s_bow_editing = !s_bow_editing;
+            screens_set_bow_editing(s_bow_editing);
         } else if (s_settings_selection == 3) {
             s_layout_editing = false;
             screens_set_layout_editing(false);
@@ -373,6 +384,11 @@ static void handle_action_button(ui_press_t press) {
             ui_set_page(UI_PAGE_CALIBRATION);
         } else if (s_settings_selection == 5) {
             request_brightness_cycle();
+        } else if (s_settings_selection == 6) {
+            if (!emit_command(UI_CMD_TOGGLE_SCREEN_FLIP, 0) && !s_has_external_model) {
+                s_model.display.upside_down = !s_model.display.upside_down;
+                screens_update(&s_model);
+            }
         }
     } else if (page == UI_PAGE_LAYOUT) {
         if (press == UI_PRESS_LONG) {
@@ -410,6 +426,8 @@ static void handle_action_button(ui_press_t press) {
         }
     } else if (page == UI_PAGE_CALIBRATION && press == UI_PRESS_SHORT) {
         emit_command(UI_CMD_CALIBRATION_SET, (int32_t)s_calibration_selection);
+    } else if (page == UI_PAGE_CALIBRATION && press == UI_PRESS_LONG) {
+        emit_command(UI_CMD_CALIBRATION_CLEAR, (int32_t)s_calibration_selection);
     } else if (page == UI_PAGE_MARK && press == UI_PRESS_SHORT) {
         if (!emit_command(UI_CMD_TOGGLE_APPROACH_LOCK, 0) && !s_has_external_model) {
             s_model.course.approach_lock = !s_model.course.approach_lock;
@@ -452,7 +470,23 @@ static void handle_adjust_button(ui_button_t btn, ui_press_t press) {
         }
         break;
     case UI_PAGE_SETTINGS:
-        s_settings_selection = (uint8_t)((s_settings_selection + 7 + delta) % 7);
+        if (s_bow_editing) {
+            if (emit_command(UI_CMD_ADJUST_BOW_OFFSET_DM, delta)) {
+                return;
+            }
+            if (!s_has_external_model) {
+                s_model.course.bow_offset_m += 0.1f * (float)delta;
+                if (s_model.course.bow_offset_m < 0.0f) {
+                    s_model.course.bow_offset_m = 0.0f;
+                }
+                if (s_model.course.bow_offset_m > 12.0f) {
+                    s_model.course.bow_offset_m = 12.0f;
+                }
+            }
+            screens_set_bow_editing(true);
+            break;
+        }
+        s_settings_selection = (uint8_t)((s_settings_selection + UI_SETTINGS_ITEM_COUNT + delta) % UI_SETTINGS_ITEM_COUNT);
         screens_set_settings_selection(s_settings_selection);
         break;
     case UI_PAGE_LAYOUT:

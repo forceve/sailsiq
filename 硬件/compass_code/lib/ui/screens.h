@@ -52,7 +52,10 @@ void create_screens();
 void screens_update(const ui_model_t *model);
 void screens_set_page(ui_page_t page);
 ui_page_t screens_get_page(void);
+#define UI_SETTINGS_ITEM_COUNT 8
+
 void screens_set_settings_selection(uint8_t index);
+void screens_set_bow_editing(bool editing);
 void screens_set_layout_selection(uint8_t index);
 void screens_set_layout_editing(bool editing);
 uint8_t screens_layout_get_selection(void);

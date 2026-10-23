@@ -55,7 +55,6 @@
 
 #define UI_NAV_SLOT_COUNT 4
 #define UI_START_SLOT_COUNT 3
-#define UI_SETTINGS_ITEM_COUNT 7
 #define UI_LAYOUT_ROOT_MAX_ITEM_COUNT (UI_LAYOUT_PAGE_COUNT + 4)
 #define UI_LAYOUT_ITEM_COUNT UI_LAYOUT_ROOT_MAX_ITEM_COUNT
 #define UI_LAYOUT_PREVIEW_X 8
@@ -151,6 +150,7 @@ static calibration_view_t s_calibration;
 static ui_model_t s_model;
 static ui_page_t s_page = UI_PAGE_COMPASS;
 static uint8_t s_settings_selection = 0;
+static bool s_bow_editing = false;
 static uint8_t s_calibration_selection = 0;
 static ui_page_mode_t s_page_mode = UI_PAGE_MODE_ALL;
 static uint8_t s_layout_selection = 0;
@@ -673,7 +673,7 @@ static const char *layout_root_item_name(uint8_t index) {
         return s_page_mode == UI_PAGE_MODE_ALL ? "Page Mode: All" : "Page Mode: Start+Compass";
     }
     if (index == layout_root_save_index()) {
-        return "Save to SD";
+        return "Save";
     }
     if (index == layout_root_reset_page_index()) {
         return "Reset Page";
@@ -822,17 +822,18 @@ void create_screen_settings() {
     lv_obj_t *right = panel_create(screen, 185, 36, 205, 220);
     const char *items[] = {
         "Race Mode: Fleet",
-        "Start Config",
+        "Bow 0.0m",
         "Course Template",
         "Page Layout",
         "Calibration",
         "Display",
+        "Screen: Normal",
         "System",
     };
 
     label_create(left, "Settings", 8, 8, 140, 22, &ui_style_label, LV_TEXT_ALIGN_LEFT);
     for (uint8_t i = 0; i < UI_SETTINGS_ITEM_COUNT; i++) {
-        s_settings.items[i] = label_create(left, items[i], 8, 34 + 23 * i, 150, 21, &ui_style_label, LV_TEXT_ALIGN_LEFT);
+        s_settings.items[i] = label_create(left, items[i], 8, 34 + 20 * i, 150, 18, &ui_style_label, LV_TEXT_ALIGN_LEFT);
     }
     s_settings.mode = label_create(left, "PG Back AC Enter +/-", 8, 194, 150, 18, &ui_style_topbar, LV_TEXT_ALIGN_LEFT);
     s_settings.diagram = right;
@@ -890,7 +891,7 @@ void create_screen_calibration() {
         s_calibration.items[i] = label_create(left, items[i], 8, 34 + 22 * i, 150, 20, &ui_style_label, LV_TEXT_ALIGN_LEFT);
     }
     label_create(right, "Sampling", 8, 8, 120, 22, &ui_style_label, LV_TEXT_ALIGN_LEFT);
-    label_create(right, "AC captures GNSS point", 8, 36, 188, 18, &ui_style_topbar, LV_TEXT_ALIGN_LEFT);
+    label_create(right, "AC set / add  Long clear", 8, 36, 188, 18, &ui_style_topbar, LV_TEXT_ALIGN_LEFT);
     rule_create(right, 102, 72, 2, 82);
     rule_create(right, 54, 116, 96, 2);
     label_create(right, "Pin", 34, 102, 48, 20, &ui_style_label, LV_TEXT_ALIGN_CENTER);
@@ -1084,9 +1085,15 @@ static void update_start(void) {
     update_topbar(&s_start.top, &s_model.status);
     ui_format_heading(heading, sizeof(heading), s_model.nav.heading_deg, s_model.nav.heading_confidence > 0);
     ui_format_sog(sog, sizeof(sog), s_model.nav.sog_kn, sog_valid);
-    format_line_with_unit(line, sizeof(line), s_model.nav.line_dist_m, fix_ok);
-    ui_format_ttl(ttl, sizeof(ttl), s_model.nav.ttl_sec, fix_ok && s_model.nav.sog_kn > 1.0f);
-    format_burn(burn, sizeof(burn), s_model.start.burn_sec);
+    format_line_with_unit(line, sizeof(line), s_model.nav.line_dist_m,
+                         ui_value_valid(s_model.nav.line_dist_m));
+    if (s_model.nav.ttl_sec >= 0) {
+        ui_format_ttl(ttl, sizeof(ttl), s_model.nav.ttl_sec, true);
+        format_burn(burn, sizeof(burn), s_model.start.burn_sec);
+    } else {
+        snprintf(ttl, sizeof(ttl), "--");
+        snprintf(burn, sizeof(burn), "--");
+    }
     if (active) {
         ui_format_countdown(timer, sizeof(timer), s_model.start.countdown_sec);
     } else {
@@ -1172,13 +1179,17 @@ static void update_layout_row(uint8_t row, const char *text, bool visible, bool 
 }
 
 static void update_settings(void) {
+    char bow[32];
+    snprintf(bow, sizeof(bow), s_bow_editing ? "Bow %.1fm *" : "Bow %.1fm",
+             (double)s_model.course.bow_offset_m);
     const char *items[] = {
         s_model.start.race_mode == RACE_MATCH ? "Race Mode: Match" : "Race Mode: Fleet",
-        "Start Config",
+        bow,
         "Course Template",
         "Page Layout",
         "Calibration",
         s_model.display.night_mode ? "Display: Night" : "Display: Day",
+        s_model.display.upside_down ? "Screen: Upside" : "Screen: Normal",
         "System",
     };
     update_topbar(&s_settings.top, &s_model.status);
@@ -1346,9 +1357,9 @@ static void update_layout_action_preview(uint8_t action) {
         lines[1] = s_page_mode == UI_PAGE_MODE_ALL ? "AC switches to 2 pages" : "AC switches to 4 pages";
         lines[2] = "Affects PG page cycle";
     } else if (action == layout_root_save_index()) {
-        lines[0] = "Write config to SD";
+        lines[0] = "Write config to NVS";
         lines[1] = "Keeps presets after reboot";
-        lines[2] = "Uses platform save hook";
+        lines[2] = "Stored with screen flip";
     } else if (action == layout_root_reset_page_index()) {
         snprintf(target, sizeof(target), "Target: %s", layout_page_name(s_layout_target_page));
         lines[0] = target;
@@ -1421,7 +1432,16 @@ static void update_calibration(void) {
     for (uint8_t i = 0; i < UI_CALIBRATION_ITEM_COUNT; i++) {
         update_menu_item(s_calibration.items[i], items[i], i == s_calibration_selection);
     }
-    set_text_if_changed(s_calibration.status, s_model.status.fix == FIX_NONE ? "NOFIX - WAIT" : "FIX READY / AC SET");
+    if (s_model.status.cal_status[0] != '\0') {
+        set_text_if_changed(s_calibration.status, s_model.status.cal_status);
+    } else {
+        set_text_if_changed(s_calibration.status, s_model.status.fix == FIX_NONE ? "NOFIX - WAIT" : "FIX READY / AC SET");
+    }
+}
+
+void screens_set_bow_editing(bool editing) {
+    s_bow_editing = editing;
+    update_settings();
 }
 
 void tick_screen_compass() { update_compass(); }

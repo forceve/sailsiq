@@ -139,5 +139,5 @@ void ui_format_ready(char *buf, size_t len, int32_t preset_sec) {
     if (preset_sec < 0) {
         preset_sec = 0;
     }
-    snprintf(buf, len, "%ld:%02ld", (long)(preset_sec / 60), (long)(preset_sec % 60));
+    snprintf(buf, len, "%02ld:%02ld", (long)(preset_sec / 60), (long)(preset_sec % 60));
 }

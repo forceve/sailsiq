@@ -86,8 +86,11 @@ typedef enum {
     UI_CMD_ADJUST_START_PRESET_SEC, /* value: signed seconds */
     UI_CMD_TOGGLE_RACE_MODE,
     UI_CMD_SET_BRIGHTNESS_PROFILE,  /* value: ui_brightness_profile_t */
+    UI_CMD_TOGGLE_SCREEN_FLIP,
     UI_CMD_TOGGLE_APPROACH_LOCK,
     UI_CMD_CALIBRATION_SET,         /* value: ui_calibration_target_t */
+    UI_CMD_CALIBRATION_CLEAR,       /* value: ui_calibration_target_t */
+    UI_CMD_ADJUST_BOW_OFFSET_DM,    /* value: signed 0.1 m steps */
     UI_CMD_MANUAL_PAGE_SELECTED,    /* value: ui_page_t */
 } ui_command_t;
 
@@ -127,6 +130,7 @@ typedef struct {
     uint8_t hour;
     uint8_t minute;
     bool logger_error;
+    char cal_status[24];
 } ui_status_t;
 
 typedef struct {
@@ -169,12 +173,14 @@ typedef struct {
     bool approach_lock;
     bool auto_scene_enabled;
     bool manual_override;
+    float bow_offset_m;
 } ui_course_t;
 
 typedef struct {
     ui_brightness_profile_t brightness_profile;
     uint8_t lcd_brightness_percent;
     bool night_mode;
+    bool upside_down;
 } ui_display_t;
 
 typedef struct {
