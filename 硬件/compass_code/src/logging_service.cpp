@@ -163,7 +163,7 @@ bool LoggingService::openTemporarySessionFiles() {
 
   for (uint16_t attempt = 0; attempt < 10000; ++attempt) {
     const int gnss_written =
-        snprintf(gnss_file_name_, sizeof(gnss_file_name_), "G%04u.UBX",
+        snprintf(gnss_file_name_, sizeof(gnss_file_name_), "G%04u.NMEA",
                  attempt);
     const int imu_written =
         snprintf(imu_file_name_, sizeof(imu_file_name_), "I%04u.CSV",
@@ -211,7 +211,7 @@ bool LoggingService::openSessionFiles(const GpsUtcTime &utc) {
   }
 
   if (!buildUniqueFileName(gnss_file_name_, sizeof(gnss_file_name_), "GNSS",
-                           "UBX", utc) ||
+                           "NMEA", utc) ||
       !buildUniqueFileName(imu_file_name_, sizeof(imu_file_name_), "IMU",
                            "CSV", utc)) {
     return false;
@@ -247,7 +247,7 @@ bool LoggingService::applyTimestampedNames(const GpsUtcTime &utc) {
   char gnss_final_name[48] = {};
   char imu_final_name[48] = {};
   if (!buildUniqueFileName(gnss_final_name, sizeof(gnss_final_name), "GNSS",
-                           "UBX", utc) ||
+                           "NMEA", utc) ||
       !buildUniqueFileName(imu_final_name, sizeof(imu_final_name), "IMU",
                            "CSV", utc)) {
     return false;

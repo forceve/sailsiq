@@ -1,8 +1,6 @@
 #pragma once
 
 #include <Arduino.h>
-#include <SparkFun_MMC5983MA_Arduino_Library.h>
-#include <7Semi_BMI270.h>
 
 struct ImuSample {
   uint64_t timestamp_us = 0;
@@ -28,9 +26,5 @@ class ImuService {
   const ImuSample &latestSample() const;
 
  private:
-  BMI270_7Semi bmi270_;
-  SFE_MMC5983MA mmc5983ma_;
-  bool ready_ = false;
-  uint32_t next_read_us_ = 0;
   ImuSample latest_sample_;
 };

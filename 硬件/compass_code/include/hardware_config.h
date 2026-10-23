@@ -8,14 +8,17 @@ constexpr int8_t PIN_UNASSIGNED = -1;
 
 namespace uart_gnss {
 constexpr uint32_t BAUD_RATE = 115200;
-constexpr uint32_t BAUD_CANDIDATES[] = {115200, 38400, 9600, 230400, 57600};
-constexpr uint8_t NAV_RATE_HZ = 8;
-constexpr uint8_t NAV_SAT_RATE_DIVISOR = NAV_RATE_HZ;
-constexpr uint8_t NAV_SIG_RATE_DIVISOR = NAV_RATE_HZ;
+constexpr uint32_t BAUD_CANDIDATES[] = {115200, 9600, 38400, 57600, 4800};
+constexpr uint8_t NAV_RATE_HZ = 10;
 constexpr size_t RX_BUFFER_BYTES = 4096;
+constexpr int8_t TX = 17;
+constexpr int8_t RX = 18;
+}  // namespace uart_gnss
+
+namespace uart_aux {
 constexpr int8_t TX = 4;
 constexpr int8_t RX = 5;
-}  // namespace uart_gnss
+}  // namespace uart_aux
 
 namespace spi_display {
 constexpr uint32_t CLOCK_HZ = 80000000;
@@ -44,6 +47,12 @@ constexpr uint8_t BMI270_ADDR_SECONDARY = 0x69;
 constexpr uint8_t BMI270_ADDR = BMI270_ADDR_PRIMARY;
 constexpr uint8_t MMC5983MA_ADDR = 0x30;
 }  // namespace i2c
+
+namespace i2c_battery {
+constexpr int8_t SDA = 1;
+constexpr int8_t SCL = 2;
+constexpr uint8_t BQ25890_ADDR = 0x6A;
+}  // namespace i2c_battery
 
 namespace imu {
 constexpr uint32_t READ_RATE_HZ = 64;

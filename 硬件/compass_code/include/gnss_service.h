@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
-#include <SparkFun_u-blox_GNSS_v3.h>
+#include <TinyGPS++.h>
 
 struct GpsUtcTime {
   uint16_t year = 0;
@@ -19,6 +19,8 @@ struct GnssNavSnapshot {
   uint8_t satellites = 0;
   float sog_kn = NAN;
   float cog_deg = NAN;
+  double latitude_deg = NAN;
+  double longitude_deg = NAN;
 };
 
 class GnssService {
@@ -38,15 +40,20 @@ class GnssService {
   uint16_t readLoggedUbx(uint8_t *destination, uint16_t max_bytes);
 
  private:
-  bool tryBeginAtBaud(uint32_t baud_rate);
-  bool configureModule(uint32_t detected_baud_rate);
-  static void onPvt(UBX_NAV_PVT_data_t *pvt);
-  void handlePvt(const UBX_NAV_PVT_data_t &pvt);
+  static constexpr uint16_t kLogCapacity = 8192;
+  static constexpr uint32_t kFreshMs = 1500;
 
-  static GnssService *instance_;
+  bool probeBaud(uint32_t baud_rate);
+  void openPort(uint32_t baud_rate);
+  void configureModule(uint32_t detected_baud_rate);
+  void publish();
+  void noteTime(uint16_t year, uint8_t month, uint8_t day, uint8_t hour,
+                uint8_t minute, uint8_t second, uint8_t centisecond);
+  void pushLog(uint8_t byte);
+  void clearLog();
 
   HardwareSerial serial_{1};
-  SFE_UBLOX_GNSS_SERIAL gnss_;
+  TinyGPSPlus gps_;
   bool ready_ = false;
   bool has_time_ = false;
   uint32_t detected_baud_rate_ = 0;
@@ -54,4 +61,9 @@ class GnssService {
   GnssNavSnapshot latest_nav_;
   uint64_t gps_anchor_us_ = 0;
   uint32_t local_anchor_us_ = 0;
+  uint8_t log_buffer_[kLogCapacity] = {};
+  uint16_t log_head_ = 0;
+  uint16_t log_tail_ = 0;
+  uint16_t log_count_ = 0;
+  uint16_t log_max_ = 0;
 };

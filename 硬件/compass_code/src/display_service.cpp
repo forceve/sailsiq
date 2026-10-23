@@ -31,14 +31,7 @@ bool DisplayService::begin() {
   digitalWrite(hardware::spi_display::CS, HIGH);
   SPI.begin(hardware::spi_display::SCLK, hardware::PIN_UNASSIGNED,
             hardware::spi_display::MOSI, hardware::spi_display::CS);
-
-  panel_.initialize();
-  SPI.setFrequency(hardware::spi_display::CLOCK_HZ);
-  panel_.High_Power_Mode();
-  panel_.display_on(true);
-  panel_.display_Inversion(false);
-  panel_.clearDisplay();
-  panel_.display();
+  pushPanel();
 
   lv_init();
 #if LVGL_VERSION_MAJOR >= 9
@@ -89,6 +82,36 @@ void DisplayService::requestRedraw() {
   lv_obj_invalidate(lv_scr_act());
 }
 
+void DisplayService::setUpsideDown(bool upside_down) {
+  upside_down_ = upside_down;
+}
+
+void DisplayService::pushPanel() {
+  panel_.initialize();
+  SPI.setFrequency(hardware::spi_display::CLOCK_HZ);
+  panel_.High_Power_Mode();
+  panel_.display_on(true);
+  panel_.display_Inversion(false);
+  panel_.clearDisplay();
+  panel_.display();
+}
+
+void DisplayService::recoverPanel() {
+  pushPanel();
+  requestRedraw();
+}
+
+void DisplayService::mapToPanel(int32_t x, int32_t y, uint16_t *panel_x,
+                                uint16_t *panel_y) const {
+  if (upside_down_) {
+    *panel_x = static_cast<uint16_t>(y);
+    *panel_y = static_cast<uint16_t>(kUiWidth - 1 - x);
+  } else {
+    *panel_x = static_cast<uint16_t>(kUiHeight - 1 - y);
+    *panel_y = static_cast<uint16_t>(x);
+  }
+}
+
 #if LVGL_VERSION_MAJOR >= 9
 void DisplayService::flush(lv_display_t *display, const lv_area_t *area,
                            uint8_t *px_map) {
@@ -109,8 +132,9 @@ void DisplayService::flushArea(lv_display_t *display, const lv_area_t *area,
       const int32_t col = x - area->x1;
       const bool black = colorIsBlack(color_p[row * width + col]);
 
-      const uint16_t panel_x = static_cast<uint16_t>(kUiHeight - 1 - y);
-      const uint16_t panel_y = static_cast<uint16_t>(x);
+      uint16_t panel_x = 0;
+      uint16_t panel_y = 0;
+      mapToPanel(x, y, &panel_x, &panel_y);
       panel_.writePoint(panel_x, panel_y, black);
     }
   }
@@ -138,8 +162,9 @@ void DisplayService::flushArea(lv_disp_drv_t *disp_drv, const lv_area_t *area,
       const int32_t col = x - area->x1;
       const bool black = colorIsBlack(color_p[row * width + col]);
 
-      const uint16_t panel_x = static_cast<uint16_t>(kUiHeight - 1 - y);
-      const uint16_t panel_y = static_cast<uint16_t>(x);
+      uint16_t panel_x = 0;
+      uint16_t panel_y = 0;
+      mapToPanel(x, y, &panel_x, &panel_y);
       panel_.writePoint(panel_x, panel_y, black);
     }
   }

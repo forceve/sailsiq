@@ -12,8 +12,13 @@ class DisplayService {
   bool begin();
   void update();
   void requestRedraw();
+  void setUpsideDown(bool upside_down);
+  void recoverPanel();
 
  private:
+  void mapToPanel(int32_t x, int32_t y, uint16_t *panel_x,
+                  uint16_t *panel_y) const;
+  void pushPanel();
 #if LVGL_VERSION_MAJOR >= 9
   static void flush(lv_display_t *display, const lv_area_t *area,
                     uint8_t *px_map);
@@ -40,4 +45,5 @@ class DisplayService {
 #endif
   uint32_t last_tick_ms_ = 0;
   uint32_t last_ui_tick_ms_ = 0;
+  bool upside_down_ = false;
 };

@@ -1,12 +1,10 @@
 #include <Arduino.h>
+#include <Preferences.h>
 #include <math.h>
+#include <stdio.h>
 #include <SPI.h>
-#include <Wire.h>
 
-#include <7Semi_BMI270.h>
 #include <SdFat.h>
-#include <SparkFun_MMC5983MA_Arduino_Library.h>
-#include <SparkFun_u-blox_GNSS_v3.h>
 #include <ST7305_4p2_BW_DisplayDriver.h>
 #include <ui.h>
 #include <ui_format.h>
@@ -15,10 +13,8 @@
 #include "display_service.h"
 #include "gnss_service.h"
 #include "hardware_config.h"
-#include "imu_service.h"
 #include "logging_service.h"
-#include "nav_estimator.h"
-#include "sensor_rotation_config.h"
+#include "start_line.h"
 
 DebouncedButton sw1(hardware::switches::SW1, hardware::switches::ACTIVE_LOW,
                     hardware::switches::DEBOUNCE_MS);
@@ -29,10 +25,9 @@ DebouncedButton sw3(hardware::switches::SW3, hardware::switches::ACTIVE_LOW,
 DebouncedButton sw4(hardware::switches::SW4, hardware::switches::ACTIVE_LOW,
                     hardware::switches::DEBOUNCE_MS);
 GnssService gnss;
-ImuService imu;
 LoggingService logger;
 DisplayService display;
-NavEstimator nav_estimator;
+sailsiq::StartLineService start_line;
 ui_model_t ui_model = {};
 
 namespace {
@@ -41,7 +36,88 @@ constexpr uint32_t kLongPressMs = 1000;
 constexpr uint32_t kRepeatPressMs = 200;
 constexpr uint32_t kUiUpdateIntervalMs = 250;
 constexpr uint32_t kSerialStatusIntervalMs = 1000;
-constexpr float kMinDriftSogKnots = 1.0f;
+constexpr char kPrefsNamespace[] = "sailsiq";
+constexpr char kScreenFlipKey[] = "flip";
+constexpr char kLayoutKey[] = "layout";
+constexpr char kStartLineKey[] = "sline";
+
+float last_heading_deg = NAN;
+
+void copyCalStatus() {
+  snprintf(ui_model.status.cal_status, sizeof(ui_model.status.cal_status),
+           "%s", start_line.status());
+}
+
+void saveStartLine() {
+  uint8_t blob[sailsiq::StartLineService::kBlobBytes];
+  size_t written = 0;
+  if (!start_line.exportBlob(blob, sizeof(blob), &written)) {
+    return;
+  }
+  Preferences prefs;
+  if (!prefs.begin(kPrefsNamespace, false)) {
+    return;
+  }
+  prefs.putBytes(kStartLineKey, blob, written);
+  prefs.end();
+}
+
+void loadStartLine() {
+  Preferences prefs;
+  if (!prefs.begin(kPrefsNamespace, true)) {
+    copyCalStatus();
+    return;
+  }
+  uint8_t blob[sailsiq::StartLineService::kBlobBytes];
+  const bool ok =
+      prefs.getBytesLength(kStartLineKey) == sizeof(blob) &&
+      prefs.getBytes(kStartLineKey, blob, sizeof(blob)) == sizeof(blob);
+  prefs.end();
+  if (ok) {
+    start_line.importBlob(blob, sizeof(blob));
+  }
+  ui_model.course.bow_offset_m = start_line.bowOffsetM();
+  copyCalStatus();
+}
+
+sailsiq::StartLinePosition positionFrom(const GnssNavSnapshot &nav) {
+  sailsiq::StartLinePosition position;
+  position.fix_type = nav.fix_type;
+  position.latitude_deg = nav.latitude_deg;
+  position.longitude_deg = nav.longitude_deg;
+  return position;
+}
+
+bool startLineEndFrom(int32_t value, sailsiq::StartLineEnd *end) {
+  if (value == UI_CAL_SET_PIN) {
+    *end = sailsiq::StartLineEnd::Pin;
+    return true;
+  }
+  if (value == UI_CAL_SET_BOAT) {
+    *end = sailsiq::StartLineEnd::Boat;
+    return true;
+  }
+  return false;
+}
+
+bool loadScreenUpsideDown() {
+  Preferences prefs;
+  if (!prefs.begin(kPrefsNamespace, true)) {
+    return false;
+  }
+  const bool upside_down = prefs.getBool(kScreenFlipKey, false);
+  prefs.end();
+  return upside_down;
+}
+
+void saveScreenUpsideDown(bool upside_down) {
+  Preferences prefs;
+  if (!prefs.begin(kPrefsNamespace, false)) {
+    return;
+  }
+  prefs.putBool(kScreenFlipKey, upside_down);
+  prefs.end();
+}
 
 struct UiButtonRuntime {
   DebouncedButton *button;
@@ -127,8 +203,45 @@ void handleUiCommand(ui_command_t command, int32_t value) {
       ui_model.display.night_mode =
           ui_model.display.brightness_profile == LCD_PROFILE_NIGHT;
       break;
+    case UI_CMD_TOGGLE_SCREEN_FLIP:
+      ui_model.display.upside_down = !ui_model.display.upside_down;
+      display.setUpsideDown(ui_model.display.upside_down);
+      display.requestRedraw();
+      saveScreenUpsideDown(ui_model.display.upside_down);
+      break;
     case UI_CMD_TOGGLE_APPROACH_LOCK:
       ui_model.course.approach_lock = !ui_model.course.approach_lock;
+      break;
+    case UI_CMD_CALIBRATION_SET: {
+      sailsiq::StartLineEnd end;
+      if (!startLineEndFrom(value, &end)) {
+        snprintf(ui_model.status.cal_status, sizeof(ui_model.status.cal_status),
+                 "NOT YET");
+        break;
+      }
+      start_line.capture(end, positionFrom(gnss.latestNav()), last_heading_deg);
+      ui_model.course.bow_offset_m = start_line.bowOffsetM();
+      copyCalStatus();
+      saveStartLine();
+      break;
+    }
+    case UI_CMD_CALIBRATION_CLEAR: {
+      sailsiq::StartLineEnd end;
+      if (!startLineEndFrom(value, &end)) {
+        snprintf(ui_model.status.cal_status, sizeof(ui_model.status.cal_status),
+                 "NOT YET");
+        break;
+      }
+      start_line.clearEnd(end);
+      copyCalStatus();
+      saveStartLine();
+      break;
+    }
+    case UI_CMD_ADJUST_BOW_OFFSET_DM:
+      start_line.setBowOffsetM(start_line.bowOffsetM() + 0.1f * static_cast<float>(value));
+      ui_model.course.bow_offset_m = start_line.bowOffsetM();
+      copyCalStatus();
+      saveStartLine();
       break;
     default:
       break;
@@ -157,8 +270,10 @@ void initUiModel() {
   ui_model.start.match_box_sec = 240;
   ui_model.course.rounding_side = ROUND_UNKNOWN;
   ui_model.course.auto_scene_enabled = true;
+  ui_model.course.bow_offset_m = 0.0f;
   ui_model.display.brightness_profile = LCD_PROFILE_DAY;
   ui_model.display.lcd_brightness_percent = 100;
+  copyCalStatus();
 }
 
 void updateUiButtons(uint32_t now_ms) {
@@ -201,9 +316,9 @@ void updateUiModel(uint32_t now_ms) {
 
   const GnssNavSnapshot nav = gnss.latestNav();
   const GpsUtcTime utc = gnss.latestUtc();
-  const ImuSample &sample = imu.latestSample();
-  const NavEstimate &estimate = nav_estimator.latest();
   const bool gnss_nav_ok = gnssNavUsable(nav);
+  const float gps_course_deg =
+      gnss_nav_ok ? normalizeDegrees(nav.cog_deg) : NAN;
 
   ui_model.status.fix = mapFix(nav.fix_type);
   ui_model.status.sat_count = nav.satellites;
@@ -212,16 +327,52 @@ void updateUiModel(uint32_t now_ms) {
   ui_model.status.hour = utc.hour;
   ui_model.status.minute = utc.minute;
 
-  ui_model.nav.heading_deg = estimate.heading_deg;
-  ui_model.nav.cog_deg = gnss_nav_ok ? normalizeDegrees(nav.cog_deg) : NAN;
+  if (gnss_nav_ok && nav.sog_kn > 1.0f) {
+    last_heading_deg = gps_course_deg;
+  }
+  const float heading_deg =
+      isfinite(last_heading_deg) ? last_heading_deg : gps_course_deg;
+
+  ui_model.nav.heading_deg = heading_deg;
+  ui_model.nav.cog_deg = gps_course_deg;
   ui_model.nav.sog_kn = gnss_nav_ok ? nav.sog_kn : NAN;
-  ui_model.nav.drift_deg =
-      gnss_nav_ok && nav.sog_kn > kMinDriftSogKnots &&
-              isfinite(ui_model.nav.heading_deg)
-          ? ui_wrap180(ui_model.nav.cog_deg - ui_model.nav.heading_deg)
-          : NAN;
-  ui_model.nav.heading_confidence = sample.mag_valid ? 90 : 0;
-  ui_model.nav.mag_bad = !sample.mag_valid;
+  ui_model.nav.drift_deg = NAN;
+  ui_model.nav.heading_confidence = isfinite(heading_deg) ? 70 : 0;
+  ui_model.nav.mag_bad = true;
+
+  int32_t box_countdown_sec = -1;
+  if (ui_model.start.race_mode == RACE_MATCH && ui_model.start.timer_running &&
+      ui_model.start.countdown_sec > ui_model.start.match_box_sec) {
+    box_countdown_sec =
+        ui_model.start.countdown_sec - ui_model.start.match_box_sec;
+  }
+  const sailsiq::StartLineFix line = start_line.evaluate(
+      positionFrom(nav), heading_deg, ui_model.nav.sog_kn,
+      ui_model.start.timer_running ? ui_model.start.countdown_sec : -1,
+      box_countdown_sec);
+  if (line.line_valid) {
+    ui_model.nav.line_dist_m = line.line_dist_m;
+    ui_model.start.ocs_risk = line.ocs_risk && ui_model.start.timer_running &&
+                              ui_model.start.countdown_sec > 0;
+  } else {
+    ui_model.nav.line_dist_m = NAN;
+    ui_model.start.ocs_risk = false;
+  }
+  if (line.ttl_valid) {
+    ui_model.nav.ttl_sec = line.ttl_sec;
+    ui_model.start.burn_sec = line.burn_valid ? line.burn_sec : 0;
+    ui_model.start.box_burn_sec =
+        line.box_burn_valid ? line.box_burn_sec : 0;
+  } else {
+    ui_model.nav.ttl_sec = -1;
+    ui_model.start.burn_sec = 0;
+    ui_model.start.box_burn_sec = 0;
+  }
+  ui_model.course.bow_offset_m = start_line.bowOffsetM();
+  if (ui_get_page() != UI_PAGE_CALIBRATION ||
+      ui_model.status.cal_status[0] == '\0') {
+    copyCalStatus();
+  }
 
   if (last_ui_update_ms != 0 &&
       static_cast<uint32_t>(now_ms - last_ui_update_ms) <
@@ -235,6 +386,9 @@ void updateUiModel(uint32_t now_ms) {
 
 void printSerialStatus(uint32_t now_ms) {
   static uint32_t last_status_ms = 0;
+  if (!Serial.isPlugged()) {
+    return;
+  }
   if (last_status_ms != 0 &&
       static_cast<uint32_t>(now_ms - last_status_ms) <
           kSerialStatusIntervalMs) {
@@ -244,73 +398,89 @@ void printSerialStatus(uint32_t now_ms) {
 
   const GnssNavSnapshot nav = gnss.latestNav();
   const GpsUtcTime utc = gnss.latestUtc();
-  const ImuSample &sample = imu.latestSample();
-  const NavEstimate &estimate = nav_estimator.latest();
-  const uint16_t ubx_pending = gnss.loggedBytesAvailable();
-  const uint16_t ubx_max_pending = gnss.maxLoggedBytesAvailable();
+  const uint16_t nmea_pending = gnss.loggedBytesAvailable();
+  const uint16_t nmea_max_pending = gnss.maxLoggedBytesAvailable();
   const bool gnss_nav_ok = gnssNavUsable(nav);
-  const float drift_deg =
-      gnss_nav_ok && nav.sog_kn > kMinDriftSogKnots &&
-              isfinite(estimate.heading_deg)
-          ? ui_wrap180(normalizeDegrees(nav.cog_deg) - estimate.heading_deg)
-          : NAN;
 
   Serial.printf(
       "[%lu ms] GPS ready=%u baud=%lu fix=%u sats=%u gps_nav=%u time=%u "
       "%04u-%02u-%02u %02u:%02u:%02u gps_sog=%.2fkn gps_cog=%.1f "
-      "ubx_pending=%u ubx_max=%u | "
-      "IMU ready=%u a/g/m=%u/%u/%u ts=%llu gps_ts=%u "
-      "acc=%.3f,%.3f,%.3f gyro=%.2f,%.2f,%.2f mag=%.0f,%.0f,%.0f | "
-      "AHRS valid=%u hdg_src=IMU hdg=%.1f roll=%.1f pitch=%.1f "
-      "drift=%.1f | "
-      "SD ready=%u sd_err=%02x/%02x log_ready=%u log_named=%u imu_pending=%u "
+      "nmea_pending=%u nmea_max=%u | IMU removed hdg_src=GPS | "
+      "SD ready=%u sd_err=%02x/%02x log_ready=%u log_named=%u "
       "last_flush_age=%lu\n",
       static_cast<unsigned long>(now_ms), gnss.isReady() ? 1U : 0U,
       static_cast<unsigned long>(gnss.detectedBaudRate()), nav.fix_type,
       nav.satellites, gnss_nav_ok ? 1U : 0U,
       gnss.hasTime() ? 1U : 0U, utc.year, utc.month, utc.day, utc.hour,
-      utc.minute, utc.second, nav.sog_kn, nav.cog_deg, ubx_pending,
-      ubx_max_pending,
-      imu.isReady() ? 1U : 0U,
-      sample.accel_valid ? 1U : 0U, sample.gyro_valid ? 1U : 0U,
-      sample.mag_valid ? 1U : 0U,
-      static_cast<unsigned long long>(sample.timestamp_us),
-      sample.gps_time_valid ? 1U : 0U, sample.accel_cal_g[0],
-      sample.accel_cal_g[1], sample.accel_cal_g[2],
-      sample.gyro_cal_dps[0], sample.gyro_cal_dps[1],
-      sample.gyro_cal_dps[2], sample.mag_cal_counts[0],
-      sample.mag_cal_counts[1], sample.mag_cal_counts[2],
-      estimate.attitude_valid ? 1U : 0U, estimate.heading_deg,
-      estimate.roll_deg, estimate.pitch_deg, drift_deg,
-      logger.storageReady() ? 1U : 0U, logger.storageErrorCode(),
-      logger.storageErrorData(), logger.isReady() ? 1U : 0U,
-      logger.hasTimestampedNames() ? 1U : 0U,
-      static_cast<unsigned int>(logger.pendingImuBytes()),
+      utc.minute, utc.second, nav.sog_kn, nav.cog_deg, nmea_pending,
+      nmea_max_pending, logger.storageReady() ? 1U : 0U,
+      logger.storageErrorCode(), logger.storageErrorData(),
+      logger.isReady() ? 1U : 0U, logger.hasTimestampedNames() ? 1U : 0U,
       static_cast<unsigned long>(now_ms - logger.lastFlushMs()));
 }
 
 }  // namespace
 
-void setup() {
-  Serial.begin(115200);
+extern "C" bool ui_layout_storage_load(ui_layout_config_t *config) {
+  if (config == nullptr) {
+    return false;
+  }
 
+  Preferences prefs;
+  if (!prefs.begin(kPrefsNamespace, true)) {
+    return false;
+  }
+  const bool ok =
+      prefs.getBytesLength(kLayoutKey) == sizeof(ui_layout_config_t) &&
+      prefs.getBytes(kLayoutKey, config, sizeof(ui_layout_config_t)) ==
+          sizeof(ui_layout_config_t);
+  prefs.end();
+  return ok;
+}
+
+extern "C" bool ui_layout_storage_save(const ui_layout_config_t *config) {
+  if (config == nullptr) {
+    return false;
+  }
+
+  Preferences prefs;
+  if (!prefs.begin(kPrefsNamespace, false)) {
+    return false;
+  }
+  const size_t written =
+      prefs.putBytes(kLayoutKey, config, sizeof(ui_layout_config_t));
+  prefs.end();
+  return written == sizeof(ui_layout_config_t);
+}
+
+void setup() {
   sw1.begin();
   sw2.begin();
   sw3.begin();
   sw4.begin();
 
-  gnss.begin();
-  imu.begin();
-  logger.begin();
-
   initUiModel();
+  loadStartLine();
+  ui_model.display.upside_down = loadScreenUpsideDown();
+  display.setUpsideDown(ui_model.display.upside_down);
   display.begin();
   ui_set_command_handler(&handleUiCommand);
   ui_update(&ui_model);
+  display.update();
+
+  Serial.begin(115200);
+  gnss.begin();
+  logger.begin();
 }
 
 void loop() {
   const uint32_t now_ms = millis();
+  static uint8_t panel_recoveries = 0;
+  if (panel_recoveries < 2 &&
+      now_ms >= (panel_recoveries == 0 ? 1000u : 3000u)) {
+    panel_recoveries++;
+    display.recoverPanel();
+  }
   sw1.update(now_ms);
   sw2.update(now_ms);
   sw3.update(now_ms);
@@ -318,19 +488,6 @@ void loop() {
   updateUiButtons(now_ms);
 
   gnss.update();
-
-  const uint64_t timestamp_us =
-      gnss.hasTime() ? gnss.gpsTimeMicros() : static_cast<uint64_t>(micros());
-  if (imu.update(timestamp_us, gnss.hasTime())) {
-    ButtonStateSnapshot buttons;
-    buttons.sw1_pressed = sw1.isPressed();
-    buttons.sw2_pressed = sw2.isPressed();
-    buttons.sw3_pressed = sw3.isPressed();
-    buttons.sw4_pressed = sw4.isPressed();
-    logger.appendImuSample(imu.latestSample(), buttons);
-    nav_estimator.update(imu.latestSample());
-  }
-
   logger.flushIfDue(now_ms, gnss);
   updateUiModel(now_ms);
   printSerialStatus(now_ms);
