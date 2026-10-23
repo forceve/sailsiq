@@ -1,0 +1,178 @@
+{
+  "checked_on": "2026-09-07",
+  "reference_segment_mm": 700,
+  "sources": {
+    "selden_catalogue": {
+      "url": "https://support.seldenmast.com/files/1681308368/595-950-E.pdf",
+      "local": "references/selden_keelboat_catalogue.pdf",
+      "page": 10
+    },
+    "sparcraft_catalogue": {
+      "url": "https://www.sparcraft.com/wp-content/uploads/2021/07/Mast_s_2019_fr_lgt.pdf",
+      "local": "references/sparcraft_s_masts.pdf",
+      "page": 2
+    },
+    "ims80_supplier": {
+      "url": "https://www.rigrite.com/Spars/Sparcraft_Spars/IMS_Masts/IMS-080_mast.php"
+    },
+    "j80_variants": {
+      "url": "https://www.rigrite.com/Spars/A_spec_classes/J80_Spars.php"
+    },
+    "fareast23r": {
+      "url": "https://www.fareastyachts.com.au/media/1600/fareast-23r-pricelist-2024-au-v1-8.pdf"
+    },
+    "fareast28r": {
+      "url": "https://fareastboats.co.uk/assets/downloads/FAREAST-28R-pricelist-2023.pdf"
+    },
+    "selden_mast_id": {
+      "url": "https://www.seldenmast.com/products/masts/"
+    }
+  },
+  "sections": {
+    "fareast23r": {
+      "family": "selden_c",
+      "section": "C126",
+      "width_mm": 79,
+      "depth_mm": 126,
+      "wall_mm": 2.4,
+      "mouth_mm": 5,
+      "chamber_width_mm": 19,
+      "chamber_depth_mm": 21.2,
+      "catalogue_mass_kg_per_m": 2.54,
+      "catalogue_inertia_strong_cm4": 172.2,
+      "catalogue_inertia_weak_cm4": 74.6,
+      "catalogue_source": "selden_catalogue",
+      "verified_section_fields": [
+        "width_mm",
+        "depth_mm",
+        "wall_mm",
+        "mouth_mm",
+        "catalogue_mass_kg_per_m",
+        "catalogue_inertia_strong_cm4",
+        "catalogue_inertia_weak_cm4"
+      ],
+      "estimated_fields": [
+        "body_shape_from_generic_C_illustration",
+        "chamber_width_mm",
+        "chamber_depth_mm",
+        "flange_and_corner_details"
+      ],
+      "boat_assignment": "Candidate retained from existing project; Selden supplier confirmed, exact C-section requires physical Mast ID."
+    },
+    "fareast28r": {
+      "family": "selden_c",
+      "section": "C139",
+      "width_mm": 85,
+      "depth_mm": 139,
+      "wall_mm": 2.5,
+      "mouth_mm": 5,
+      "chamber_width_mm": 20.443037974683545,
+      "chamber_depth_mm": 23.387301587301586,
+      "catalogue_mass_kg_per_m": 2.94,
+      "catalogue_inertia_strong_cm4": 237.4,
+      "catalogue_inertia_weak_cm4": 99,
+      "catalogue_source": "selden_catalogue",
+      "verified_section_fields": [
+        "width_mm",
+        "depth_mm",
+        "wall_mm",
+        "mouth_mm",
+        "catalogue_mass_kg_per_m",
+        "catalogue_inertia_strong_cm4",
+        "catalogue_inertia_weak_cm4"
+      ],
+      "estimated_fields": [
+        "body_shape_from_generic_C_illustration",
+        "chamber_width_mm",
+        "chamber_depth_mm",
+        "flange_and_corner_details"
+      ],
+      "boat_assignment": "Candidate retained from existing project; Selden supplier confirmed, exact C-section requires physical Mast ID."
+    },
+    "j80": {
+      "family": "ims80",
+      "section": "IMS-80 (S80 exterior reference)",
+      "width_mm": 82,
+      "depth_mm": 133,
+      "wall_mm": 2.5,
+      "mouth_mm": 3,
+      "chamber_width_mm": 15,
+      "chamber_depth_mm": 11.5,
+      "catalogue_mass_kg_per_m": 2.55,
+      "catalogue_inertia_strong_cm4": 193,
+      "catalogue_inertia_weak_cm4": 77,
+      "catalogue_source": "sparcraft_catalogue",
+      "verified_section_fields": [
+        "width_mm",
+        "depth_mm",
+        "catalogue_mass_kg_per_m",
+        "catalogue_inertia_strong_cm4",
+        "catalogue_inertia_weak_cm4"
+      ],
+      "estimated_fields": [
+        "wall_mm",
+        "mouth_mm",
+        "chamber_width_mm",
+        "chamber_depth_mm",
+        "inner_T_rib"
+      ],
+      "wall_basis": "2.5 mm rounded modelling estimate cross-checked against published mass; neither source specifies wall thickness.",
+      "boat_assignment": "IMS-80 variant consistent with supplied image and supplier J80 usage; older F78 and Hall 128 variants exist."
+    }
+  },
+  "mount_design": {
+    "silicone_thickness_mm": 3,
+    "basis": "User design requirement; uncompressed thickness normal to the mast contact envelope.",
+    "connector_revision": "tree-v7",
+    "saddle_and_pad_height_mm": 128,
+    "panel_height_mm": 128,
+    "tree_design_source": "tree_bracing.py",
+    "tree_design_document": "TREE_BRACING_DESIGN.md",
+    "rope_route_status": "Provisional paired side envelopes; qualitative J80 observation only; all dimensions unmeasured.",
+    "terminal_construction": "V4 continuous branch loft retained: unified panel blend, perimeter rounding before drilling; no independent fan bodies.",
+    "root_shell_join_operation": "Rolling blend over each actual closed saddle/fork intersection, preserving the inner contact surface.",
+    "branch_junction_source": "branch_junction.py",
+    "branch_junction_profile_neck_reference_y_mm": 34,
+    "branch_junction_z_half_height_mm": 20,
+    "branch_junction_construction": "Single symmetric even quartic XY(z) surface without intermediate Z knots, constrained by the central profile and distal-arm positions and tangents; no overlapping full-ellipse fork or root/crotch R2 fillet.",
+    "branch_junction_profile_samples": 384,
+    "branch_junction_profile_fit_limit_mm": 0.0001,
+    "branch_junction_tangent_difference_step_mm": 0.01,
+    "internal_seam_normal_angle_limit_degrees": 0.5,
+    "root_validation_source": "validate_root_blend_v7.py",
+    "junction_quality_source": "junction_quality.py",
+    "volume_metrics_source": "shape_metrics.py",
+    "volume_integration_tolerance": 1e-8,
+    "structural_analysis_status": "No new V7 finite-element analysis or numerical topology optimization. Geometry checks do not qualify strength.",
+    "previous_revision_archive": "cadquery_out/tree_v6",
+    "root_transition_source": "root_blend_v7.py",
+    "root_rolling_radius_by_model_mm": {
+      "fareast23r": 4,
+      "fareast28r": 5,
+      "j80": 5
+    },
+    "root_center_section_parameters": {
+      "fareast23r": {
+        "rear_y": 24,
+        "neck_offset": 5,
+        "shear": 0.4
+      },
+      "fareast28r": {
+        "rear_y": 24,
+        "neck_offset": 5,
+        "shear": 0.7
+      },
+      "j80": {
+        "rear_y": 14,
+        "neck_offset": 7,
+        "shear": 0.7
+      }
+    },
+    "root_min_sampled_principal_radius_mm": 0.4,
+    "inner_strap_locator_y_range_mm": [
+      5,
+      12
+    ],
+    "connector_reference_shell_trim_mm": 0.02
+  }
+}

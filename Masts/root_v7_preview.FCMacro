@@ -1,0 +1,38 @@
+from pathlib import Path
+import sys,time,json,os
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+from PySide import QtCore
+root=Path(globals().get('__file__',sys.argv[-1])).resolve().parent
+out=root/'cadquery_out/root_transition_v7'
+out.mkdir(exist_ok=True)
+try:
+    sources=[]
+    for prefix,folder in [('fareast23r','Fareast23RBracingMount'),('fareast28r','Fareast28RBracingMount'),('j80','J80BracingMount')]:
+        sources.append((prefix,'v6',root/f'cadquery_out/tree_v6/{prefix}_tree_bracing_mount.brep'))
+        current=root.parent/f'硬件/{folder}/cadquery_out/{prefix}_tree_bracing_mount.brep'
+        if os.environ.get('SAILSIQ_ROOT_TRIAL') == '1':
+            current=root/f'cadquery_out/v7_experiments/{prefix}_accepted_root.brep' if prefix!='j80' else root/'cadquery_out/v7_experiments/j80_v7_full.brep'
+        sources.append((prefix,'v7',current))
+    for prefix,label,path in sources:
+        doc=App.newDocument('Root'+prefix+label)
+        obj=doc.addObject('PartDesign::Feature','Root')
+        obj.Shape=Part.read(str(path)).common(Part.makeBox(70,75,66,App.Vector(25,-5,567)))
+        obj.ViewObject.ShapeColor=(.23,.40,.49)
+        obj.ViewObject.DisplayMode='Shaded';obj.ViewObject.Deviation=.02
+        doc.recompute();view=Gui.activeDocument().activeView()
+        view.setCameraType('Orthographic')
+        for orientation in ['iso','top']:
+            if orientation=='iso':view.viewAxonometric()
+            else:view.viewTop()
+            for _ in range(30):Gui.updateGui();time.sleep(.02)
+            view.fitAll();Gui.updateGui()
+            view.saveImage(str(out/f'{prefix}_{label}_{orientation}.png'),1100,950,'White')
+        App.closeDocument(doc.Name)
+    (out/'render_sources.json').write_text(json.dumps([{'model':p,'revision':v,'brep':str(s)} for p,v,s in sources],indent=2))
+    (out/'preview_done.txt').write_text('actual BREP rendered')
+except Exception:
+    import traceback
+    (out/'preview_error.txt').write_text(traceback.format_exc())
+finally:QtCore.QTimer.singleShot(0,Gui.getMainWindow().close)

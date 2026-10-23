@@ -1,0 +1,270 @@
+"""FreeCAD native review of the explicit tree geometry and paired rope lanes.
+
+Run all three exporters and both validation scripts first. Batch invocation:
+set SAILSIQ_FREECAD_BATCH=1, then launch FreeCAD with this macro. Saves native
+review documents, validates their shapes and renders from the actual BREP.
+"""
+from pathlib import Path
+import json
+import os
+import sys
+import time
+import shutil
+import tempfile
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+root = Path(globals().get("__file__", sys.argv[-1])).resolve().parent
+out = root/"cadquery_out"
+out.mkdir(exist_ok=True)
+sys.path.insert(0, str(root))
+from shape_metrics import measure_paths, compare_volumes
+
+metric_directory = tempfile.TemporaryDirectory(prefix="tree_review_metrics_", dir=str(out))
+metric_jobs = {}
+created = []
+report = []
+models = (("fareast23r", "Fareast23RBracingMount", -225),
+          ("fareast28r", "Fareast28RBracingMount", 0),
+          ("j80", "J80BracingMount", 225))
+ROOT_TRANSITION = ("V7 rolling blend over actual closed saddle/fork intersections; "
+                   "whole perimeter tangent; quartic fork joined at Z +/-20 mm")
+
+
+def metric_path(path):
+    key = f"source_{len(metric_jobs):04d}"
+    metric_jobs[key] = str(Path(path).resolve())
+    return key
+
+
+def metric_shape(shape):
+    key = f"native_{len(metric_jobs):04d}"
+    path = Path(metric_directory.name)/(key+".brep")
+    shape.exportBrep(str(path))
+    assert path.is_file() and path.stat().st_size > 0
+    metric_jobs[key] = str(path)
+    return key
+
+
+def apply_adaptive_metrics(rows, metadata):
+    # One worker for all parts in this model, rather than one process per part.
+    metrics = measure_paths(metric_jobs)
+    for row in rows:
+        refs = row.pop("_metric_refs")
+        native = metrics[refs["native"]]
+        source = metrics[refs["source"]]
+        assert native["solids"] == source["solids"]
+        comparisons = {"source_to_checked_native": compare_volumes(
+            native["volume_mm3"], source["volume_mm3"], label=row["part"])}
+        if "step" in refs:
+            comparisons["step_to_brep"] = compare_volumes(
+                metrics[refs["step"]]["volume_mm3"], source["volume_mm3"],
+                label=row["part"]+" STEP/BREP")
+            comparisons["freecad_step_readback"] = compare_volumes(
+                metrics[refs["step_native"]]["volume_mm3"], metrics[refs["step"]]["volume_mm3"],
+                label=row["part"]+" FreeCAD STEP readback")
+        expected_key = {"Bracket": "bracket", "ConnectorReference": "connector"}.get(row["part"])
+        if expected_key:
+            comparisons["validation_report"] = compare_volumes(
+                native["volume_mm3"], metadata[expected_key]["new_volume_mm3"],
+                label=row["part"]+" validation report")
+        display = metrics[refs.get("display", refs["native"])]
+        row["adaptive_volume_mm3"] = native["volume_mm3"]
+        row["display_shape_adaptive_volume_mm3"] = display["volume_mm3"]
+        row["volume_integration_relative_tolerance"] = 1e-8
+        row["adaptive_volume_checks"] = comparisons
+    metric_jobs.clear()
+
+
+def checked_shape(path):
+    # Use original BREP for the sculpted bracket/connector, avoiding loss of
+    # local intersection tolerances in a BREP -> STEP -> BREP round trip.
+    # STEP geometry is still checked separately for shape, solids and volume.
+    source = path.with_suffix(".brep") if path.stem.endswith(("tree_bracing_mount", "tree_bracing_connector")) else path
+    s = Part.read(str(source))
+    refs = {"source": metric_path(source)}
+    if source != path:
+        exchange = Part.read(str(path))
+        assert exchange.isValid() and len(exchange.Solids) == len(s.Solids)
+        refs["step"] = metric_path(path)
+        refs["step_native"] = metric_shape(exchange)
+        assert s.getTolerance(1) < 0.01, "Review native intersection accuracy"
+    assert s.isValid(), path
+    fixed = False
+    original_solids = len(s.Solids)
+    bounds = s.BoundBox
+    try:
+        s.check(True)
+    except ValueError as error:
+        errors = [x for x in str(error).splitlines() if x.startswith("Error in")]
+        # Only normalize curve-on-surface representation tolerances. Real
+        # self-intersection, disconnected solids or other faults fail the run.
+        if not errors or any("BOPAlgo_InvalidCurveOnSurface" not in x for x in errors):
+            raise
+        # Preserve existing local edge/vertex tolerances and the geometry.
+        # Apply the smallest passing minimum to wires only; face tolerances
+        # must not be enlarged or original intersection tolerances discarded.
+        original = s
+        for tolerance in (1e-5, 3e-5, 1e-4, 3e-4):
+            candidate = original.copy()
+            candidate.limitTolerance(tolerance, 0, Part.Wire)
+            try:
+                candidate.check(True)
+            except ValueError:
+                continue
+            s, fixed = candidate, tolerance
+            break
+        else:
+            raise ValueError(f"Representation tolerance exceeds 0.0003 mm: {path}")
+        assert s.isValid() and len(s.Solids) == original_solids
+        for field in ("XMin", "XMax", "YMin", "YMax", "ZMin", "ZMax"):
+            assert abs(getattr(s.BoundBox, field)-getattr(bounds, field)) < 1e-5
+    # Export only after the native BOP check; geometry is measured adaptively
+    # in the independent CadQuery runtime before this model is saved.
+    refs["native"] = metric_shape(s)
+    return s, fixed, refs
+
+
+def add(doc, name, shape, color, transparency=0, x=0):
+    obj = doc.addObject("PartDesign::Feature", name)
+    obj.Shape = shape
+    obj.Placement.Base.x = x
+    obj.ViewObject.ShapeColor = color
+    obj.ViewObject.LineColor = (0.15, 0.19, 0.23)
+    obj.ViewObject.DisplayMode = "Shaded" if name.endswith("Bracket") else "Flat Lines"
+    obj.ViewObject.Deviation = 0.05
+    obj.ViewObject.Transparency = transparency
+    return obj
+
+
+def render(doc, path, view="iso", size=(1400, 1150)):
+    App.setActiveDocument(doc.Name)
+    doc.recompute()
+    v = Gui.activeDocument().activeView()
+    v.setCameraType("Orthographic")
+    target = None
+    if view == "top":
+        target = (0, 0, 0, 1)
+        v.setCameraOrientation(target)
+    elif view == "front":
+        target = (0.7071067812, 0, 0, 0.7071067812)
+        v.setCameraOrientation(target)
+    else:
+        v.viewAxonometric()
+    # Process the camera animation instead of capturing an intermediate view.
+    for _ in range(60):
+        Gui.updateGui()
+        time.sleep(0.025)
+    if target:
+        v.setCameraOrientation(target)
+        Gui.updateGui()
+        actual = v.getCameraOrientation().Q
+        assert abs(sum(a*b for a, b in zip(actual, target))) > 0.99999, (view, actual)
+    v.fitAll()
+    Gui.updateGui()
+    v.saveImage(str(path), *size, "White")
+
+
+try:
+    comp = App.newDocument("TreeBracingComparison")
+    created.append(comp.Name)
+    for prefix, directory, offset in models:
+        print(prefix, "native review started", flush=True)
+        folder = root.parent/"硬件"/directory/"cadquery_out"
+        meta = json.loads((folder/"tree_bracing_validation.json").read_text(encoding="utf-8"))
+        assert meta["revision"].startswith("tree-v7"), "Regenerate V7 geometry and validation first"
+        doc = App.newDocument(prefix+"TreeBracing")
+        created.append(doc.Name)
+        rows = []
+        objects = {}
+        descriptions = (
+            ("Bracket", "tree_bracing_mount", (0.23, 0.40, 0.49), 0),
+            ("Mast", "mast_700mm_from_section", (0.68, 0.74, 0.77), 55),
+            ("Silicone", "front_silicone_padding", (0.95, 0.70, 0.30), 25),
+            ("Straps", "rear_elastic_strap_bands", (0.12, 0.40, 0.80), 25),
+            ("Ropes", "cunningham_rope_references", (0.95, 0.36, 0.08), 0),
+            ("RopeEnvelopes", "cunningham_side_clearance_envelopes", (0.98, 0.70, 0.26), 88),
+            ("ConnectorReference", "tree_bracing_connector", (0.29, 0.56, 0.64), 0),
+            ("DeviceShell", "sailsiq_real_shell_reference", (0.14, 0.16, 0.18), 0),
+            ("DeviceFace", "sailsiq_real_bonded_panel_reference", (0.08, 0.09, 0.10), 0),
+            ("DeviceWindow", "sailsiq_lcd_window_reference", (0.45, 0.68, 0.78), 20),
+            ("DeviceButtons", "sailsiq_direct_buttons_reference", (0.12, 0.14, 0.16), 0),
+            ("ClampCover", "clear_acrylic_clamp_cover_plate", (0.58, 0.79, 0.85), 65),
+            ("ScrewReferences", "six_m3_clamp_screw_references", (0.7, 0.72, 0.75), 0),
+        )
+        for name, suffix, color, trans in descriptions:
+            shape, fixed, metric_refs = checked_shape(folder/f"{prefix}_{suffix}.step")
+            if name == "Bracket":
+                assert len(shape.Solids) == 1
+            if name == "Mast":
+                full = add(doc, "FullMastReference", shape, color, 60)
+                full.ViewObject.Visibility = False
+                shape = shape.common(Part.makeBox(300, 300, 180, App.Vector(-150, -150, 510)))
+                shape.check(True)
+                metric_refs["display"] = metric_shape(shape)
+            obj = add(doc, name, shape, color, trans)
+            objects[name] = obj
+            obj.ViewObject.Visibility = name in {"Bracket", "Mast", "Silicone", "Straps", "Ropes"}
+            if name == "Bracket":
+                obj.addProperty("App::PropertyString", "DesignRevision", "Design").DesignRevision = meta["revision"]
+                obj.addProperty("App::PropertyString", "RootTransition", "Design").RootTransition = ROOT_TRANSITION
+                obj.addProperty("App::PropertyString", "Qualification", "Design").Qualification = "Geometry checked; no structural load qualification"
+            if name in {"Ropes", "RopeEnvelopes"}:
+                obj.addProperty("App::PropertyString", "RoutingBasis", "Design").RoutingBasis = "Paired side routes; positions and dimensions unmeasured"
+            if name in {"Bracket", "Mast", "Straps", "Ropes"}:
+                comparison_obj = add(comp, prefix+name, shape, color, trans, offset)
+                if name == "Bracket":
+                    comparison_obj.addProperty("App::PropertyString", "DesignRevision", "Design").DesignRevision = meta["revision"]
+                    comparison_obj.addProperty("App::PropertyString", "RootTransition", "Design").RootTransition = ROOT_TRANSITION
+            rows.append({"part": name, "solids": len(shape.Solids), "BOP_check": "passed",
+                         "tolerance_normalized_mm": fixed if fixed else None,
+                         "source_normalization_report": (
+                             str((folder/f"{prefix}_{suffix}.normalization.json").relative_to(root.parent))
+                             if name in {"Bracket", "ConnectorReference"} else None),
+                         "maximum_stored_tolerance_mm": shape.getTolerance(1),
+                         "geometry_source": "BREP" if name in {"Bracket", "ConnectorReference"} else "STEP",
+                         "_metric_refs": metric_refs})
+        apply_adaptive_metrics(rows, meta)
+        render(doc, folder/f"{prefix}_tree_bracing_3d.png")
+        objects["RopeEnvelopes"].ViewObject.Visibility = True
+        render(doc, folder/f"{prefix}_tree_bracing_top.png", "top", (1400, 1050))
+        for name in ("Mast", "Silicone", "Straps"):
+            objects[name].ViewObject.Visibility = False
+        render(doc, folder/f"{prefix}_tree_structure.png", "iso")
+        objects["Bracket"].ViewObject.DisplayMode = "Shaded"
+        render(doc, folder/f"{prefix}_tree_structure_shaded.png", "iso")
+        objects["Bracket"].ViewObject.DisplayMode = "Flat Lines"
+        render(doc, folder/f"{prefix}_tree_back_view.png", "front", (1400, 1100))
+        objects["Bracket"].ViewObject.DisplayMode = "Shaded"
+        for name in ("Mast", "Silicone", "Straps"):
+            objects[name].ViewObject.Visibility = True
+        objects["RopeEnvelopes"].ViewObject.Visibility = False
+        render(doc, folder/f"{prefix}_tree_bracing_3d.png")
+        doc.saveAs(str(folder/f"{prefix}_tree_bracing_mount.FCStd"))
+        # Refresh the established review filename to avoid showing an old mount.
+        doc.saveCopy(str(folder/f"{prefix}_bracing_mount_refined.FCStd"))
+        shutil.copyfile(folder/f"{prefix}_tree_bracing_3d.png", folder/f"{prefix}_bracing_mount_3d.png")
+        shutil.copyfile(folder/f"{prefix}_tree_bracing_top.png", folder/f"{prefix}_bracing_mount_top.png")
+        report.append({"model": prefix, "revision": meta["revision"], "parts": rows})
+        print(prefix, "native shapes, adaptive volumes and renders passed", flush=True)
+    render(comp, out/"tree_bracing_comparison.png", "iso", (1900, 1100))
+    comp.saveAs(str(out/"tree_bracing_comparison.FCStd"))
+    comp.saveCopy(str(out/"bracing_mounts_3mm.FCStd"))
+    shutil.copyfile(out/"tree_bracing_comparison.png", out/"bracing_mounts_3d.png")
+    render(comp, out/"bracing_mounts_top.png", "top", (1900, 1050))
+    (out/"tree_freecad_validation.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    (out/"tree_freecad_error.log").unlink(missing_ok=True)
+    print("All V7 FreeCAD review files saved", flush=True)
+except Exception:
+    import traceback
+    (out/"tree_freecad_error.log").write_text(traceback.format_exc(), encoding="utf-8")
+    raise
+finally:
+    metric_directory.cleanup()
+    if os.environ.get("SAILSIQ_FREECAD_BATCH") == "1":
+        from PySide import QtCore
+        for name in created:
+            App.closeDocument(name)
+        if not App.listDocuments():
+            QtCore.QTimer.singleShot(0, Gui.getMainWindow().close)

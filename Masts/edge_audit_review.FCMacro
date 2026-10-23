@@ -1,0 +1,37 @@
+"""Render cropped BREP inspection samples with and without face edges."""
+from pathlib import Path
+import sys,time
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+from PySide import QtCore
+
+out=Path(globals().get('__file__',sys.argv[-1])).resolve().parent/'cadquery_out/edge_audit'
+try:
+    for sample in ('right_edge','fan_end'):
+        doc=App.newDocument('EdgeAudit'+sample)
+        obj=doc.addObject('PartDesign::Feature','CroppedSample')
+        obj.Shape=Part.read(str(out/f'j80_{sample}.brep'))
+        obj.ViewObject.ShapeColor=(.23,.40,.49)
+        obj.ViewObject.LineColor=(.12,.16,.19)
+        obj.ViewObject.Deviation=.02
+        doc.recompute()
+        v=Gui.activeDocument().activeView()
+        v.setCameraType('Orthographic')
+        for view in ('iso','right'):
+            if view=='iso':v.viewAxonometric()
+            else:v.viewRight()
+            for _ in range(60):
+                Gui.updateGui();time.sleep(.025)
+            v.fitAll()
+            for mode,label in (('Flat Lines','edges'),('Shaded','shaded')):
+                assert mode in obj.ViewObject.listDisplayModes()
+                obj.ViewObject.DisplayMode=mode
+                Gui.updateGui()
+                v.saveImage(str(out/f'{sample}_{view}_{label}.png'),1100,1000,'White')
+        App.closeDocument(doc.Name)
+except Exception:
+    import traceback
+    (out/'render_error.log').write_text(traceback.format_exc())
+finally:
+    QtCore.QTimer.singleShot(0,Gui.getMainWindow().close)

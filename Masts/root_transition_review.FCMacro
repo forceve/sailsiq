@@ -1,0 +1,43 @@
+"""Render the actual root, including its complete perimeter, without edge lines."""
+from pathlib import Path
+import sys,time
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+from PySide import QtCore
+
+root=Path(globals().get('__file__',sys.argv[-1])).resolve().parent
+out=root/'cadquery_out/root_transition_v6'
+out.mkdir(exist_ok=True)
+try:
+    paths={
+        'v5_j80':root/'cadquery_out/tree_v5/j80_tree_bracing_mount.brep',
+        'v6_j80':root.parent/'硬件/J80BracingMount/cadquery_out/j80_tree_bracing_mount.brep',
+        'v6_fareast23r':root.parent/'硬件/Fareast23RBracingMount/cadquery_out/fareast23r_tree_bracing_mount.brep',
+        'v6_fareast28r':root.parent/'硬件/Fareast28RBracingMount/cadquery_out/fareast28r_tree_bracing_mount.brep'}
+    for label,path in paths.items():
+        doc=App.newDocument('Root'+label)
+        shape=Part.read(str(path))
+        shape=shape.common(Part.makeBox(70,70,66,App.Vector(25,-5,567)))
+        obj=doc.addObject('PartDesign::Feature','RootDetail')
+        obj.Shape=shape
+        obj.ViewObject.ShapeColor=(.23,.40,.49)
+        obj.ViewObject.DisplayMode='Shaded'
+        obj.ViewObject.Deviation=.02
+        doc.recompute()
+        view=Gui.activeDocument().activeView()
+        view.setCameraType('Orthographic')
+        for orientation in ('iso','right','top'):
+            if orientation=='iso':view.viewAxonometric()
+            elif orientation=='right':view.viewRight()
+            else:view.viewTop()
+            for _ in range(60):Gui.updateGui();time.sleep(.025)
+            view.fitAll();Gui.updateGui()
+            view.saveImage(str(out/f'root_{label}_{orientation}.png'),1200,1000,'White')
+        App.closeDocument(doc.Name)
+    (out/'render_error.log').unlink(missing_ok=True)
+except Exception:
+    import traceback
+    (out/'render_error.log').write_text(traceback.format_exc())
+finally:
+    QtCore.QTimer.singleShot(0,Gui.getMainWindow().close)

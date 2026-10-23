@@ -1,0 +1,5 @@
+"""Compatibility entry point for the current tree-bracing FreeCAD review."""
+from pathlib import Path
+import sys
+macro = Path(globals().get("__file__", sys.argv[-1])).resolve().with_name("tree_bracing_review.FCMacro")
+exec(compile(macro.read_text(encoding="utf-8"), str(macro), "exec"), {"__file__": str(macro), "__name__": "__main__"})

@@ -1,0 +1,23 @@
+[
+  {
+    "file": "selden_keelboat_catalogue.pdf",
+    "url": "https://support.seldenmast.com/files/1681308368/595-950-E.pdf",
+    "retrieved": "2026-09-07",
+    "sha256": "ed1287d2a2fcca09c402228cf4176701e150c2015a38e2222be1029cf4d36498",
+    "bytes": 14167619
+  },
+  {
+    "file": "sparcraft_s_sections.jpg",
+    "url": "https://www.sparcraft.com/wp-content/uploads/2021/11/sections_S_sparcraft.jpg",
+    "retrieved": "2026-09-07",
+    "sha256": "83e2f1e3da5e6877b3f749e03ec7e3ebebbb1860fa5daf3b066c15d498ce15ec",
+    "bytes": 301675
+  },
+  {
+    "file": "sparcraft_s_masts.pdf",
+    "url": "https://www.sparcraft.com/wp-content/uploads/2021/07/Mast_s_2019_fr_lgt.pdf",
+    "retrieved": "2026-09-07",
+    "sha256": "779307599e0c93c8cfb0535411b915a4d8350be55d6aa6c38b5d815fcd5519da",
+    "bytes": 969820
+  }
+]

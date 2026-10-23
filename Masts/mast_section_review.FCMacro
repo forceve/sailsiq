@@ -1,0 +1,95 @@
+"""Run in FreeCAD after validate_mast_sections.py to inspect the STEP results.
+
+Creates a native document per boat with a full mast and a visible 20 mm section,
+plus a side-by-side review. Only closes this macro's newly created documents.
+"""
+from pathlib import Path
+import json
+import os
+import sys
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+root = Path(globals().get("__file__", sys.argv[-1])).resolve().parent
+hardware_dir = root.parent / "硬件"
+out = root / "cadquery_out"
+out.mkdir(parents=True, exist_ok=True)
+report = []
+created = []
+try:
+    comparison = App.newDocument("MastSectionComparison")
+    created.append(comparison.Name)
+    models = (
+        ("fareast23r", "Fareast23RBracingMount", -120.0, (0.65, 0.79, 0.84)),
+        ("fareast28r", "Fareast28RBracingMount", 0.0, (0.78, 0.82, 0.87)),
+        ("j80", "J80BracingMount", 120.0, (0.91, 0.73, 0.47)),
+    )
+    for prefix, directory, offset, color in models:
+        folder = hardware_dir / directory / "cadquery_out"
+        metadata = json.loads((folder / "section_validation.json").read_text(encoding="utf-8"))
+        full = Part.read(str(folder / f"{prefix}_mast_700mm_from_section.step"))
+        section = Part.read(str(folder / f"{prefix}_mast_section_20mm.step"))
+        for shape in (full, section):
+            assert shape.isValid() and len(shape.Solids) == 1
+            shape.check(True)
+        doc = App.newDocument(f"{prefix}RefinedMast")
+        created.append(doc.Name)
+        for name, label, shape in (("Mast700mm", "Reference segment · 700 mm", full),
+                                   ("Section20mm", "Section review · 20 mm", section)):
+            obj = doc.addObject("PartDesign::Feature", name)
+            obj.Label = label
+            obj.Shape = shape
+            obj.ViewObject.ShapeColor = color
+            obj.ViewObject.LineColor = (0.13, 0.20, 0.24)
+            obj.ViewObject.DisplayMode = "Flat Lines"
+            obj.ViewObject.Visibility = name == "Section20mm"
+            for prop, value in (("NominalWidth", metadata["dimensions_mm"][0]),
+                                ("NominalDepth", metadata["dimensions_mm"][1]),
+                                ("WallThickness", metadata["wall_mm"])):
+                obj.addProperty("App::PropertyLength", prop, "Reference dimensions")
+                setattr(obj, prop, value)
+                obj.setEditorMode(prop, 1)
+            obj.addProperty("App::PropertyString", "DimensionBasis", "Reference dimensions")
+            obj.DimensionBasis = metadata["dimension_basis"]
+            obj.addProperty("App::PropertyString", "EstimatedFields", "Reference dimensions")
+            obj.EstimatedFields = ", ".join(metadata["estimated_fields"])
+        doc.recompute()
+        Gui.activeDocument().activeView().viewTop()
+        Gui.activeDocument().activeView().fitAll()
+        Gui.activeDocument().activeView().saveImage(str(folder / f"{prefix}_freecad_top.png"), 900, 1100, "White")
+        Gui.activeDocument().activeView().viewAxonometric()
+        Gui.activeDocument().activeView().fitAll()
+        Gui.activeDocument().activeView().saveImage(str(folder / f"{prefix}_freecad_section.png"), 1000, 1000, "White")
+        doc.saveAs(str(folder / f"{prefix}_mast_refined.FCStd"))
+        item = comparison.addObject("PartDesign::Feature", f"{prefix}Section")
+        item.Label = f"{prefix.upper()} · {metadata['dimensions_mm'][0]:g} x {metadata['dimensions_mm'][1]:g} mm"
+        item.Shape = section
+        item.Placement.Base.x = offset
+        item.ViewObject.ShapeColor = color
+        item.ViewObject.LineColor = (0.13, 0.20, 0.24)
+        item.ViewObject.DisplayMode = "Flat Lines"
+        report.append({"model": prefix, "FreeCAD_valid": True, "BOP_check": "passed", "solids": len(full.Solids)})
+    App.setActiveDocument(comparison.Name)
+    comparison.recompute()
+    Gui.activeDocument().activeView().viewTop()
+    Gui.activeDocument().activeView().fitAll()
+    Gui.activeDocument().activeView().saveImage(str(out / "freecad_sections_top.png"), 1500, 1100, "White")
+    Gui.activeDocument().activeView().viewAxonometric()
+    Gui.activeDocument().activeView().fitAll()
+    Gui.activeDocument().activeView().saveImage(str(out / "freecad_sections_3d.png"), 1500, 1000, "White")
+    comparison.saveAs(str(out / "mast_sections_refined.FCStd"))
+    (out / "freecad_validation.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    (out / "freecad_error.log").unlink(missing_ok=True)
+except Exception:
+    import traceback
+    (out / "freecad_error.log").write_text(traceback.format_exc(), encoding="utf-8")
+    raise
+finally:
+    if os.environ.get("SAILSIQ_FREECAD_BATCH") == "1":
+        from PySide import QtCore
+        for name in created:
+            App.closeDocument(name)
+        if not App.listDocuments():
+            QtCore.QTimer.singleShot(0, Gui.getMainWindow().close)

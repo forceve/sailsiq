@@ -1,0 +1,29 @@
+{
+  "description": "Frozen pre-tree geometry, silicone 3 mm; solid CAD volumes, not print weights.",
+  "models": [
+    {
+      "model": "fareast23r",
+      "bracket_volume_mm3": 197466.86352892828,
+      "plate_back_y_mm": 83.8,
+      "connector_volume_mm3": 51717.271686180495,
+      "step_sha256": "5ed5c7b27fa11effec5c3ce17a908b6d201661816aa905c82cda4fed574be19e",
+      "saddle_height_mm": 128.0
+    },
+    {
+      "model": "fareast28r",
+      "bracket_volume_mm3": 209738.9843572485,
+      "plate_back_y_mm": 90.3,
+      "connector_volume_mm3": 56582.495294220134,
+      "step_sha256": "4d46d3ea534a59be22e2927812cfc870c6f1e33c4ae76150d61807ca13bd4701",
+      "saddle_height_mm": 128.0
+    },
+    {
+      "model": "j80",
+      "bracket_volume_mm3": 202227.33678008494,
+      "plate_back_y_mm": 87.3,
+      "connector_volume_mm3": 54407.199241315255,
+      "step_sha256": "3db214c7039d9e2ab560e718035fe01e9df635a25739bf6eedbb56d7e9cd5ae9",
+      "saddle_height_mm": 128.0
+    }
+  ]
+}
