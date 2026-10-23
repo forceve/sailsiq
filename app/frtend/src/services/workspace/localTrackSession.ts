@@ -125,7 +125,7 @@ interface TelemetryDatasetChunkManifest {
 type TelemetryDatasetChunkInfo =
   TelemetryDatasetChunkManifest['chunksByDatasetId'][string][number];
 
-const TRACK_EXTENSIONS = new Set(['.gpx', '.ubx', '.bin', '.csv', '.tsv', '.txt']);
+const TRACK_EXTENSIONS = new Set(['.gpx', '.ubx', '.ldc', '.bin', '.csv', '.tsv', '.txt']);
 const TELEMETRY_EXTENSIONS = new Set(['.csv', '.tsv', '.txt']);
 const VIDEO_EXTENSIONS = new Set([
   '.mp4',

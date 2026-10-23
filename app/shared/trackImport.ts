@@ -1,3 +1,5 @@
+import { decodeLdcTrack, looksLikeLdc } from './ldcImport';
+
 export interface ImportedTrackPoint {
   t: number;
   lat: number;
@@ -969,6 +971,20 @@ export function parseImportBytes(
   const normalizedBytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const ext = fileName.split('.').pop()?.toLowerCase();
 
+  if (ext === 'ldc' || looksLikeLdc(normalizedBytes)) {
+    const decoded = decodeLdcTrack(normalizedBytes);
+    const parsed = finalizePoints(decoded.points, {
+      hadSourceTime: decoded.hadSourceTime,
+      hadSourceSpeed: decoded.hadSourceSpeed,
+      hadSourceHeading: decoded.hadSourceHeading,
+      hadSourceWind: false,
+    });
+    if (decoded.warnings.length > 0) {
+      parsed.preview.warnings.unshift(...decoded.warnings);
+    }
+    return parsed;
+  }
+
   if (ext === 'gpx') {
     return parseGpx(UTF8_DECODER.decode(normalizedBytes));
   }
@@ -981,7 +997,7 @@ export function parseImportBytes(
     return parseBin(normalizedBytes);
   }
 
-  throw new Error('Only GPX, UBX, CSV, TSV, TXT, and SailSIQ .bin imports are supported right now.');
+  throw new Error('Only GPX, UBX, LDC, CSV, TSV, TXT, and SailSIQ .bin imports are supported right now.');
 }
 
 export function getSessionNameFromImportFile(fileName: string): string {

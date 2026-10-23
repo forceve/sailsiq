@@ -601,11 +601,11 @@ const routes: Record<string, { handler: RouteHandler }> = {
   'POST /v1/parser/preview': {
     handler: async (_p, body) => {
       if (!(body instanceof FormData)) {
-        throw new Error('A GPX, UBX, or .bin file is required');
+        throw new Error('A GPX, UBX, LDC, or .bin file is required');
       }
       const file = body.get('file');
       if (!(file instanceof File)) {
-        throw new Error('A GPX, UBX, or .bin file is required');
+        throw new Error('A GPX, UBX, LDC, or .bin file is required');
       }
       return parseImportBytes(file.name, await file.arrayBuffer())
         .preview as ParseResult;
@@ -614,11 +614,11 @@ const routes: Record<string, { handler: RouteHandler }> = {
   'POST /v1/sessions/import': {
     handler: async (_p, body) => {
       if (!(body instanceof FormData)) {
-        throw new Error('A GPX, UBX, or .bin file is required');
+        throw new Error('A GPX, UBX, LDC, or .bin file is required');
       }
       const file = body.get('file');
       if (!(file instanceof File)) {
-        throw new Error('A GPX, UBX, or .bin file is required');
+        throw new Error('A GPX, UBX, LDC, or .bin file is required');
       }
       const parsed = parseImportBytes(file.name, await file.arrayBuffer());
       const name = body.get('name');

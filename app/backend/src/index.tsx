@@ -935,7 +935,7 @@ app.post('/api/v1/parser/preview', async (c) => {
   const file = formData.get('file');
   if (!isFileLike(file)) {
     return c.json(
-      { error: { code: 'BAD_REQUEST', message: 'A GPX, UBX, or .bin file is required.' } },
+      { error: { code: 'BAD_REQUEST', message: 'A GPX, UBX, LDC, or .bin file is required.' } },
       400,
     );
   }
@@ -962,7 +962,7 @@ app.post('/api/v1/sessions/import', async (c) => {
   const file = formData.get('file');
   if (!isFileLike(file)) {
     return c.json(
-      { error: { code: 'BAD_REQUEST', message: 'A GPX, UBX, or .bin file is required.' } },
+      { error: { code: 'BAD_REQUEST', message: 'A GPX, UBX, LDC, or .bin file is required.' } },
       400,
     );
   }
