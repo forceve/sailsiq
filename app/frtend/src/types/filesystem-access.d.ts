@@ -30,6 +30,7 @@ interface FileSystemDirectoryHandle extends FileSystemHandle {
     name: string,
     options?: { create?: boolean },
   ): Promise<FileSystemDirectoryHandle>;
+  removeEntry(name: string, options?: { recursive?: boolean }): Promise<void>;
   values(): AsyncIterable<FileSystemHandle>;
 }
 

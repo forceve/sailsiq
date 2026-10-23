@@ -33,6 +33,7 @@ import WorkspaceLensLayer from '@/components/WorkspaceLensLayer';
 import WorkspaceMapStage from '@/components/WorkspaceMapStage';
 import WorkspaceTelemetryStage from '@/components/WorkspaceTelemetryStage';
 import SessionSummaryCard from '@/components/SessionSummaryCard';
+import DeleteSessionDialog, { useSessionDeleteAction } from '@/components/DeleteSessionDialog';
 import { STAGE_CONTROL_LAYER_CLASS } from '@/components/workspaceLayers';
 import ReplayVideoCompanionPage from '@/pages/ReplayVideoCompanionPage';
 import type { ThemeStyles } from '@/theme/themeTypes';
@@ -646,6 +647,15 @@ function ReplayWorkspaceHostPage() {
   const location = useLocation();
   const { s, themeId } = useTheme();
   const { currentWorkspace } = useWorkspaceContext();
+  const sessionDelete = useSessionDeleteAction({
+    workspaceId: currentWorkspace?.id ?? null,
+    allowRemoteFallback: true,
+    onDeleted: (session, result) => {
+      navigate('/', {
+        state: { notice: result.warning ?? `Deleted "${session.name}".` },
+      });
+    },
+  });
   const replayNavigationState = location.state as ReplayNavigationState | null;
   const isRound =
     themeId === 'nordic' || themeId === 'frost' || themeId === 'neumorph';
@@ -4379,6 +4389,22 @@ function ReplayWorkspaceHostPage() {
                   {session.name}
                 </h1>
               </button>
+              <button
+                type="button"
+                onClick={() =>
+                  void sessionDelete.requestDelete({
+                    id: session.id,
+                    name: session.name,
+                  })
+                }
+                className={`flex h-9 w-9 shrink-0 items-center justify-center border border-red-400/30 text-red-600 hover:bg-red-500/10 dark:text-red-300 ${
+                  isRound ? 'rounded-xl' : 'rounded-sm'
+                }`}
+                title="Delete session"
+                aria-label="Delete session"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
 
               {topBarMetadataItems.map((item) => {
                 const visibilityClass =
@@ -5673,6 +5699,18 @@ function ReplayWorkspaceHostPage() {
           </div>
         )}
       </main>
+      <DeleteSessionDialog
+        target={sessionDelete.target}
+        preview={sessionDelete.preview}
+        previewLoading={sessionDelete.previewLoading}
+        deleteCopiedTrack={sessionDelete.deleteCopiedTrack}
+        onDeleteCopiedTrackChange={sessionDelete.setDeleteCopiedTrack}
+        busy={sessionDelete.busy}
+        error={sessionDelete.error}
+        allowRemoteFallback
+        onCancel={sessionDelete.cancelDelete}
+        onConfirm={() => void sessionDelete.confirmDelete()}
+      />
     </div>
   );
 }
