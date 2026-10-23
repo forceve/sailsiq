@@ -20,6 +20,7 @@ import {
 import { useWorkspaceContext } from '@/context/WorkspaceContext';
 import { useTheme } from '@/theme/ThemeContext';
 import SessionTabs from '@/components/SessionTabs';
+import DeleteSessionDialog, { useSessionDeleteAction } from '@/components/DeleteSessionDialog';
 import {
   ZoomControls,
   WindWidget,
@@ -668,6 +669,15 @@ export default function CanvasWorkspacePage() {
   const { s } = useTheme();
   const { currentWorkspace } = useWorkspaceContext();
   const [session, setSession] = useState<Session | null>(null);
+  const sessionDelete = useSessionDeleteAction({
+    workspaceId: currentWorkspace?.id ?? null,
+    allowRemoteFallback: true,
+    onDeleted: (session, result) => {
+      navigate('/', {
+        state: { notice: result.warning ?? `Deleted "${session.name}".` },
+      });
+    },
+  });
   const [canvasType, setCanvasType] = useState<CanvasType>('worldmap');
   const [mapLayer, setMapLayer] = useState<MapBaselayerKind>('vector');
   const [drawTool, setDrawTool] = useState<DrawTool>('select');
@@ -975,6 +985,19 @@ export default function CanvasWorkspacePage() {
             <div className={`text-[10px] uppercase tracking-widest ${s.textSecondary}`}>Canvas Mode</div>
             <div className={`max-w-[180px] truncate text-sm font-semibold ${s.textPrimary}`}>{session?.name ?? '...'}</div>
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (!session) return;
+              void sessionDelete.requestDelete({ id: session.id, name: session.name });
+            }}
+            disabled={!session}
+            className="flex h-8 w-8 items-center justify-center border border-red-400/30 text-red-600 hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40 dark:text-red-300"
+            title="Delete session"
+            aria-label="Delete session"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
           <div className="w-full md:ml-auto md:w-auto">
             <SessionTabs sessionId={sessionId} compact className="max-w-full" />
           </div>
@@ -1358,6 +1381,18 @@ export default function CanvasWorkspacePage() {
           ) : null}
         </aside>
       </div>
+      <DeleteSessionDialog
+        target={sessionDelete.target}
+        preview={sessionDelete.preview}
+        previewLoading={sessionDelete.previewLoading}
+        deleteCopiedTrack={sessionDelete.deleteCopiedTrack}
+        onDeleteCopiedTrackChange={sessionDelete.setDeleteCopiedTrack}
+        busy={sessionDelete.busy}
+        error={sessionDelete.error}
+        allowRemoteFallback
+        onCancel={sessionDelete.cancelDelete}
+        onConfirm={() => void sessionDelete.confirmDelete()}
+      />
     </div>
   );
 }

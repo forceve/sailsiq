@@ -1128,4 +1128,171 @@ export async function listLocalWorkspaceSessions(
     );
 }
 
+export interface LocalSessionDeletePreview {
+  exists: boolean;
+  exclusiveCopiedTrackPath: string | null;
+}
+
+export interface DeleteLocalWorkspaceSessionResult {
+  warning: string | null;
+}
+
+function normalizeWorkspaceRelativePath(bindingPath: string): string {
+  return bindingPath.replace(/^(?:\.\.\/)+/, '').replace(/^\.?\//, '');
+}
+
+function getCopiedIncomingTrackPath(
+  bindings: WorkspaceSessionBindingsManifest | null,
+): string | null {
+  const track = bindings?.track;
+  if (!track?.copiedToWorkspace || track.storageMode !== 'workspace_copy') return null;
+  const segments = normalizeWorkspaceRelativePath(track.path).split('/').filter(Boolean);
+  if (segments.length !== 3 || segments[0] !== 'incoming' || segments[1] !== 'track') {
+    return null;
+  }
+  return segments.join('/');
+}
+
+async function isTrackPathReferencedByOtherSession(
+  workspaceHandle: FileSystemDirectoryHandle,
+  manifest: Awaited<ReturnType<typeof loadWorkspaceManifest>>,
+  sessionId: string,
+  relativePath: string,
+): Promise<boolean> {
+  if (!manifest) return false;
+  for (const otherId of manifest.sessionsIndex) {
+    if (otherId === sessionId) continue;
+    const sessionDirectory = await getExistingSessionDirectory(workspaceHandle, otherId);
+    if (!sessionDirectory) continue;
+    const bindings = await readWorkspaceJsonFile<WorkspaceSessionBindingsManifest>(
+      sessionDirectory,
+      'bindings.json',
+    );
+    const otherPath = bindings?.track?.path
+      ? normalizeWorkspaceRelativePath(bindings.track.path)
+      : null;
+    if (otherPath === relativePath) return true;
+  }
+  return false;
+}
+
+async function removeWorkspaceRelativeFile(
+  workspaceHandle: FileSystemDirectoryHandle,
+  relativePath: string,
+): Promise<void> {
+  const segments = relativePath.split('/').filter(Boolean);
+  if (segments.length !== 3 || segments[0] !== 'incoming' || segments[1] !== 'track') {
+    throw new Error('Refusing to delete a track file outside incoming/track.');
+  }
+  let directoryHandle = workspaceHandle;
+  for (const segment of segments.slice(0, -1)) {
+    directoryHandle = await directoryHandle.getDirectoryHandle(segment);
+  }
+  await directoryHandle.removeEntry(segments[segments.length - 1]!);
+}
+
+export async function getLocalSessionDeletePreview(
+  workspaceId: string,
+  sessionId: string,
+): Promise<LocalSessionDeletePreview> {
+  const workspaceHandle = await getRequiredWorkspaceDirectoryHandle(workspaceId);
+  const sessionDirectory = await getExistingSessionDirectory(workspaceHandle, sessionId);
+  if (!sessionDirectory) {
+    return { exists: false, exclusiveCopiedTrackPath: null };
+  }
+
+  const bindings = await readWorkspaceJsonFile<WorkspaceSessionBindingsManifest>(
+    sessionDirectory,
+    'bindings.json',
+  );
+  const copiedPath = getCopiedIncomingTrackPath(bindings);
+  if (!copiedPath) {
+    return { exists: true, exclusiveCopiedTrackPath: null };
+  }
+
+  const manifest = await loadWorkspaceManifest(workspaceHandle);
+  const shared = await isTrackPathReferencedByOtherSession(
+    workspaceHandle,
+    manifest,
+    sessionId,
+    copiedPath,
+  );
+  return {
+    exists: true,
+    exclusiveCopiedTrackPath: shared ? null : copiedPath,
+  };
+}
+
+export async function deleteLocalWorkspaceSession(
+  workspaceId: string,
+  sessionId: string,
+  options?: { deleteCopiedTrackSource?: boolean },
+): Promise<DeleteLocalWorkspaceSessionResult> {
+  const workspaceHandle = await getRequiredWorkspaceDirectoryHandle(workspaceId);
+  const manifest = await loadWorkspaceManifest(workspaceHandle);
+  if (!manifest) {
+    throw new Error('workspace.json was not found in the current workspace.');
+  }
+
+  let copiedPath: string | null = null;
+  if (options?.deleteCopiedTrackSource) {
+    const preview = await getLocalSessionDeletePreview(workspaceId, sessionId);
+    copiedPath = preview.exclusiveCopiedTrackPath;
+  }
+
+  try {
+    const sessionsDirectory = await workspaceHandle.getDirectoryHandle('sessions');
+    await sessionsDirectory.removeEntry(sessionId, { recursive: true });
+  } catch (error) {
+    if (!fileNotFound(error)) throw error;
+  }
+
+  const now = new Date().toISOString();
+  manifest.sessionsIndex = manifest.sessionsIndex.filter((id) => id !== sessionId);
+  manifest.updatedAt = now;
+  await saveWorkspaceManifest(workspaceHandle, manifest);
+
+  let warning: string | null = null;
+  if (options?.deleteCopiedTrackSource) {
+    if (!copiedPath) {
+      warning =
+        'Session deleted. The copied track file was kept because it is missing or still used by another session.';
+    } else {
+      const stillShared = await isTrackPathReferencedByOtherSession(
+        workspaceHandle,
+        manifest,
+        sessionId,
+        copiedPath,
+      );
+      if (stillShared) {
+        warning =
+          'Session deleted. The copied track file was kept because another session still uses it.';
+      } else {
+        try {
+          await removeWorkspaceRelativeFile(workspaceHandle, copiedPath);
+        } catch (error) {
+          if (!fileNotFound(error)) {
+            warning =
+              error instanceof Error
+                ? `Session deleted, but the copied track file could not be removed: ${error.message}`
+                : 'Session deleted, but the copied track file could not be removed.';
+          }
+        }
+      }
+    }
+  }
+
+  try {
+    await scanStoredWorkspace(workspaceId);
+  } catch (error) {
+    warning =
+      warning ??
+      (error instanceof Error
+        ? `Session deleted, but the workspace scan failed: ${error.message}`
+        : 'Session deleted, but the workspace scan failed.');
+  }
+
+  return { warning };
+}
+
 export type { ParsedImportTrack, ParseResult };

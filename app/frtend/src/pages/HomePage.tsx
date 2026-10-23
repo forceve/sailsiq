@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   CalendarDays,
   FolderOpen,
@@ -9,11 +9,13 @@ import {
   Route as RouteIcon,
   ShieldAlert,
   ShieldCheck,
+  Trash2,
   Video,
   Waves,
 } from 'lucide-react';
 import { useWorkspaceContext } from '@/context/WorkspaceContext';
 import { useTheme } from '@/theme/ThemeContext';
+import DeleteSessionDialog, { useSessionDeleteAction } from '@/components/DeleteSessionDialog';
 import Panel from '@/components/Panel';
 import { listLocalWorkspaceSessions } from '@/services/workspace/localTrackSession';
 import type { Session } from '@/types/models';
@@ -37,6 +39,8 @@ function getPermissionTone(
 
 export default function HomePage() {
   const { s } = useTheme();
+  const location = useLocation();
+  const navigate = useNavigate();
   const {
     workspaces,
     currentWorkspace,
@@ -52,6 +56,22 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [localSessions, setLocalSessions] = useState<Session[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+  const sessionDelete = useSessionDeleteAction({
+    workspaceId: currentWorkspace?.id ?? null,
+    allowRemoteFallback: false,
+    onDeleted: (session, result) => {
+      setLocalSessions((prev) => prev.filter((item) => item.id !== session.id));
+      setError(null);
+      setMessage(result.warning ?? `Deleted "${session.name}".`);
+    },
+  });
+
+  useEffect(() => {
+    const notice = (location.state as { notice?: string } | null)?.notice;
+    if (!notice) return;
+    setMessage(notice);
+    navigate('/', { replace: true, state: null });
+  }, [location.state, navigate]);
 
   useEffect(() => {
     if (!currentWorkspace || currentWorkspace.permissionState !== 'granted') {
@@ -382,13 +402,12 @@ export default function HomePage() {
                     ? `/session/${session.id}/canvas`
                     : `/session/${session.id}/replay`;
                   return (
-                    <Link
+                    <div
                       key={session.id}
-                      to={targetPath}
-                      className={`rounded-2xl border ${s.divider} p-4 no-underline transition-colors hover:bg-current/5`}
+                      className={`rounded-2xl border ${s.divider} p-4 transition-colors hover:bg-current/5`}
                     >
                       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div className="min-w-0">
+                        <Link to={targetPath} className="min-w-0 flex-1 no-underline">
                           <div className="flex flex-wrap items-center gap-2">
                             <p className={`truncate text-base font-semibold ${s.textPrimary}`}>
                               {session.name}
@@ -407,30 +426,45 @@ export default function HomePage() {
                               {session.location || 'No location'}
                             </span>
                           </div>
-                        </div>
+                        </Link>
 
-                        <div className="grid grid-cols-3 gap-3 text-right text-sm">
-                          <div>
-                            <div className={s.textPrimary}>
-                              {Math.round(session.stats.duration / 60)} min
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                          <Link to={targetPath} className="grid grid-cols-3 gap-3 text-right text-sm no-underline">
+                            <div>
+                              <div className={s.textPrimary}>
+                                {Math.round(session.stats.duration / 60)} min
+                              </div>
+                              <div className={`text-xs ${s.textSecondary}`}>Duration</div>
                             </div>
-                            <div className={`text-xs ${s.textSecondary}`}>Duration</div>
-                          </div>
-                          <div>
-                            <div className={s.textPrimary}>
-                              {(session.stats.distance / 1000).toFixed(2)} km
+                            <div>
+                              <div className={s.textPrimary}>
+                                {(session.stats.distance / 1000).toFixed(2)} km
+                              </div>
+                              <div className={`text-xs ${s.textSecondary}`}>Distance</div>
                             </div>
-                            <div className={`text-xs ${s.textSecondary}`}>Distance</div>
-                          </div>
-                          <div>
-                            <div className={s.textPrimary}>
-                              {session.eventCount ?? 0}
+                            <div>
+                              <div className={s.textPrimary}>
+                                {session.eventCount ?? 0}
+                              </div>
+                              <div className={`text-xs ${s.textSecondary}`}>Events</div>
                             </div>
-                            <div className={`text-xs ${s.textSecondary}`}>Events</div>
-                          </div>
+                          </Link>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void sessionDelete.requestDelete({
+                                id: session.id,
+                                name: session.name,
+                              })
+                            }
+                            className="inline-flex items-center justify-center gap-2 border border-red-400/30 px-3 py-2 text-sm text-red-600 hover:bg-red-500/10 dark:text-red-300"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Delete
+                          </button>
                         </div>
                       </div>
-                    </Link>
+                    </div>
                   );
                 })}
               </div>
@@ -485,6 +519,18 @@ export default function HomePage() {
           </div>
         )}
       </Panel>
+      <DeleteSessionDialog
+        target={sessionDelete.target}
+        preview={sessionDelete.preview}
+        previewLoading={sessionDelete.previewLoading}
+        deleteCopiedTrack={sessionDelete.deleteCopiedTrack}
+        onDeleteCopiedTrackChange={sessionDelete.setDeleteCopiedTrack}
+        busy={sessionDelete.busy}
+        error={sessionDelete.error}
+        allowRemoteFallback={false}
+        onCancel={sessionDelete.cancelDelete}
+        onConfirm={() => void sessionDelete.confirmDelete()}
+      />
     </div>
   );
 }
