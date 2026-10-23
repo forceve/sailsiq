@@ -12,7 +12,7 @@ const DB_NAME = 'sailsiq-local-workspaces';
 const DB_VERSION = 1;
 const HANDLE_STORE = 'handles';
 const WORKSPACE_VERSION = 1;
-const TRACK_EXTENSIONS = new Set(['.gpx', '.ubx', '.bin']);
+const TRACK_EXTENSIONS = new Set(['.gpx', '.ubx', '.ldc', '.bin']);
 const VIDEO_EXTENSIONS = new Set([
   '.mp4',
   '.mov',
@@ -510,7 +510,7 @@ function getImportPickerTypes(target: ImportTarget) {
         description: 'Track files',
         accept: {
           'application/gpx+xml': ['.gpx'],
-          'application/octet-stream': ['.ubx', '.bin'],
+          'application/octet-stream': ['.ubx', '.ldc', '.bin'],
         },
       },
     ];

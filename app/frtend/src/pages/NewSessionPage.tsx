@@ -81,8 +81,8 @@ interface SelectedVideoTrack {
   clips: SelectedVideoSource[];
 }
 
-const SUPPORTED_IMPORT_EXTENSIONS = new Set(['gpx', 'ubx', 'bin', 'csv', 'tsv', 'txt']);
-const SUPPORTED_IMPORT_LABEL = '.gpx, .ubx, .bin, .csv, .tsv, .txt';
+const SUPPORTED_IMPORT_EXTENSIONS = new Set(['gpx', 'ubx', 'ldc', 'bin', 'csv', 'tsv', 'txt']);
+const SUPPORTED_IMPORT_LABEL = '.gpx, .ubx, .ldc, .bin, .csv, .tsv, .txt';
 
 function isSupportedImportFile(fileName: string): boolean {
   const trimmed = fileName.trim();
@@ -970,7 +970,7 @@ export default function NewSessionPage() {
                 <div className="flex flex-col items-center gap-3">
                   <Upload className={`w-10 h-10 ${s.textSecondary} opacity-50`} />
                   <p className={`text-sm ${s.textSecondary}`}>
-                    Drag & drop your <strong>.gpx</strong>, <strong>.ubx</strong>, <strong>.bin</strong>, or <strong>.csv</strong> file here
+                    Drag & drop your <strong>.gpx</strong>, <strong>.ubx</strong>, <strong>.ldc</strong>, <strong>.bin</strong>, or <strong>.csv</strong> file here
                   </p>
                   <p className={`text-xs ${s.textSecondary}`}>
                     Supports workspace files and direct local files. Workspace is optional,
@@ -983,7 +983,7 @@ export default function NewSessionPage() {
                     Browse Local File
                     <input
                       type="file"
-                      accept=".gpx,.ubx,.bin,.csv,.tsv,.txt"
+                      accept=".gpx,.ubx,.ldc,.bin,.csv,.tsv,.txt"
                       className="hidden"
                       onChange={(event) => {
                         const file = event.target.files?.[0];
