@@ -8,7 +8,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
-  ChevronUp,
   Globe,
   Film,
   Link2,
@@ -76,7 +75,7 @@ import {
   type CompanionConnectionState,
   type CompanionHostState,
 } from '@/utils/videoCompanion';
-import { getSpeed, getHeading, getWindDir, getWindSpeed, getVmgToWind } from '@/utils/trackPoint';
+import { getWindDir, getWindSpeed } from '@/utils/trackPoint';
 import {
   buildRangeIndices,
   findTelemetryIndexAtTime,
@@ -685,7 +684,6 @@ function ReplayWorkspaceHostPage() {
     ms: number;
   } | null>(null);
   const [mapLayer, setMapLayer] = useState<MapBaselayerKind>('vector');
-  const [statsCollapsed, setStatsCollapsed] = useState(false);
   const [manualWind, setManualWind] = useState<{ dir: number; speed: number } | null>(null);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('data');
   const [stageLayoutMode, setStageLayoutMode] =
@@ -4200,41 +4198,19 @@ function ReplayWorkspaceHostPage() {
 
   const stats = session.stats;
   const distanceNm = stats.distance / 1852;
-  const vmgToWind =
-    currentPoint && windDir != null ? getVmgToWind(currentPoint, windDir) : undefined;
+  const sessionDurationLabel = formatDuration(stats.duration);
   const summaryWindLabel =
     windDir != null && windSpeed != null
       ? `${Math.round(windDir)} deg / ${windSpeed.toFixed(1)} kts`
       : 'No data';
-  const statsRows = [
-    { label: 'Duration', val: formatDuration(stats.duration), unit: '' },
-    { label: 'Distance', val: distanceNm.toFixed(1), unit: 'NM' },
-    { label: 'Avg SOG', val: stats.avgSpeed.toFixed(1), unit: 'kts' },
-    { label: 'Max SOG', val: stats.maxSpeed.toFixed(1), unit: 'kts' },
-    { label: 'Turn Count', val: String(stats.turnCount), unit: '' },
-    {
-      label: 'Speed',
-      val: currentPoint ? getSpeed(currentPoint).toFixed(1) : '--',
-      unit: 'kts',
-    },
-    {
-      label: 'Heading',
-      val: currentPoint ? getHeading(currentPoint).toFixed(0) : '--',
-      unit: 'deg',
-    },
-    {
-      label: 'Wind Dir',
-      val: windDir != null ? Math.round(windDir).toString() : '--',
-      unit: 'deg',
-    },
-    {
-      label: 'VMG to wind',
-      val: vmgToWind != null ? vmgToWind.toFixed(1) : '--',
-      unit: 'kts',
-    },
-  ];
   const metadataItems = [
     { key: 'date', label: 'Date', value: formatDate(session.date) },
+    {
+      key: 'duration',
+      label: 'Duration',
+      value: sessionDurationLabel,
+      tooltipValue: `Duration ${sessionDurationLabel}`,
+    },
     {
       key: 'location',
       label: 'Location',
@@ -4260,25 +4236,8 @@ function ReplayWorkspaceHostPage() {
     },
   ].filter((item) => item.value || item.icon);
   const topBarMetadataItems = metadataItems.filter((item) =>
-    ['date', 'location', 'track', 'source'].includes(item.key),
+    ['date', 'duration', 'location', 'track', 'source'].includes(item.key),
   );
-  const liveCards = [
-    {
-      label: 'Speed',
-      value: currentPoint ? `${getSpeed(currentPoint).toFixed(1)} kts` : '--',
-    },
-    {
-      label: 'Heading',
-      value: currentPoint ? `${getHeading(currentPoint).toFixed(0)} deg` : '--',
-    },
-    {
-      label: 'Wind',
-      value:
-        windDir != null && windSpeed != null
-          ? `${Math.round(windDir)} deg / ${windSpeed.toFixed(1)} kts`
-          : 'No data',
-    },
-  ];
   const sectionLabelClass = `text-[11px] uppercase tracking-[0.18em] ${s.textSecondary}`;
   const surfaceClass = `${s.panel} rounded-none border-0 shadow-none`;
   const leftColWidth = leftCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidths.left;
@@ -4995,96 +4954,32 @@ function ReplayWorkspaceHostPage() {
             </button>
           ) : (
             <>
-          <div className={`flex items-center justify-between border-b ${s.divider} px-4 py-3`}>
-            <div>
-              <p className={sectionLabelClass}>Right Sidebar</p>
-              <h3 className={`text-lg font-semibold ${s.textPrimary}`}>Session stats</h3>
-            </div>
-            <div className="flex items-center gap-2">
-            <button onClick={() => setStatsCollapsed((collapsed) => !collapsed)} className="flex items-center gap-2">
-              <span className={`text-sm ${s.textSecondary}`}>
-                {statsCollapsed ? 'Expand' : 'Collapse'}
-              </span>
-              {statsCollapsed ? (
-                <ChevronDown className={`h-4 w-4 ${s.textSecondary}`} />
-              ) : (
-                <ChevronUp className={`h-4 w-4 ${s.textSecondary}`} />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={handleCollapseRight}
-              className={`shrink-0 p-1 rounded transition-colors ${s.textSecondary} hover:bg-current/10 lg:flex hidden`}
-              title="Collapse right sidebar"
-              aria-label="Collapse right sidebar"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-            </div>
-          </div>
-
-          {!statsCollapsed && (
-            <div className={`grid grid-cols-2 border-b ${s.divider}`}>
-              {statsRows.map((stat, index) => (
-                <div
-                  key={stat.label}
-                  className={`flex min-h-[88px] flex-col items-center justify-center px-3 py-3 text-center ${
-                    index % 2 === 0 ? `border-r ${s.divider}` : ''
-                  } ${index < statsRows.length - 1 ? `border-b ${s.divider}` : ''}`}
-                >
-                  <span className={`mb-1 text-xs ${s.textSecondary}`}>{stat.label}</span>
-                  <span className={`text-lg font-bold ${s.textPrimary}`}>
-                    {stat.val}{' '}
-                    <span className="text-xs font-normal opacity-70">{stat.unit}</span>
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-
           <div className="flex min-h-0 flex-1 flex-col">
-            <div className={`border-b ${s.divider} px-4 py-3`}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className={sectionLabelClass}>Telemetry</p>
-                  <h3 className={`text-lg font-semibold ${s.textPrimary}`}>Live data</h3>
-                </div>
-                <Activity className={`h-4 w-4 ${s.textSecondary}`} />
-              </div>
+            <div className={`flex items-center justify-between border-b ${s.divider} px-4 py-3`}>
+              <h3 className={`text-lg font-semibold ${s.textPrimary}`}>Live data</h3>
+              <button
+                type="button"
+                onClick={handleCollapseRight}
+                className={`shrink-0 p-1 rounded transition-colors ${s.textSecondary} hover:bg-current/10 lg:flex hidden`}
+                title="Collapse right sidebar"
+                aria-label="Collapse right sidebar"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
             </div>
 
-            <div className={`grid grid-cols-3 border-b ${s.divider}`}>
-              {liveCards.map((card, index) => (
-                <div
-                  key={card.label}
-                  className={`min-w-0 px-3 py-3 ${index < liveCards.length - 1 ? `border-r ${s.divider}` : ''}`}
-                >
-                  <p className={`text-[10px] uppercase tracking-[0.14em] ${s.textSecondary}`}>
-                    {card.label}
-                  </p>
-                  <p className={`truncate text-sm font-semibold ${s.textPrimary}`}>
-                    {card.value}
-                  </p>
-                </div>
-              ))}
+            <div
+              className={`flex items-baseline justify-between gap-3 border-b ${s.divider} px-4 py-2.5`}
+            >
+              <span className={`text-[10px] uppercase tracking-[0.14em] ${s.textSecondary}`}>
+                Wind
+              </span>
+              <span className={`truncate font-mono text-sm font-semibold tabular-nums ${s.textPrimary}`}>
+                {summaryWindLabel}
+              </span>
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-              <div className="mb-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-white/55">
-                  <Film className="h-3.5 w-3.5" />
-                  <span>Video status</span>
-                </div>
-                <div className={`text-sm font-semibold ${s.textPrimary}`}>
-                  {activeVideo ? activeVideoSummary : 'Data-only replay'}
-                </div>
-                {activeVideo ? (
-                  <div className={`mt-1 text-xs ${s.textSecondary}`}>
-                    {activeVideo.label ?? activeVideo.url}
-                  </div>
-                ) : null}
-              </div>
-
               <WorkspaceTelemetryStage
                 telemetry={telemetryWorkspace}
                 totalDurationMs={workspaceDurationMs}
@@ -5092,7 +4987,7 @@ function ReplayWorkspaceHostPage() {
                 onSeek={handleChartSeek}
                 onRangeSelect={(source, range) => handleRangeSelection(source)(range)}
                 selectedRangeForSource={chartSelectionRange}
-                chartHeight={82}
+                chartHeight={56}
                 className="!h-auto !overflow-visible !p-0"
                 includeVmgToWind
                 windDir={manualWind?.dir}
@@ -5100,6 +4995,7 @@ function ReplayWorkspaceHostPage() {
                 telemetryDatasets={telemetryDatasets}
                 telemetryWindow={telemetryLoadWindow}
                 telemetryTimeOriginMs={workspaceWindowEffective.startMs}
+                compact
               />
             </div>
           </div>

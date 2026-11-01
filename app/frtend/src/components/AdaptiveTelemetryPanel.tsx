@@ -25,6 +25,7 @@ interface AdaptiveTelemetryPanelProps {
   ) => { startRatio: number; endRatio: number } | null;
   chartHeight?: number;
   className?: string;
+  compact?: boolean;
 }
 
 export default function AdaptiveTelemetryPanel({
@@ -36,11 +37,18 @@ export default function AdaptiveTelemetryPanel({
   selectedRangeForSource,
   chartHeight = 96,
   className = '',
+  compact = false,
 }: AdaptiveTelemetryPanelProps) {
   const visibleSeries = series.filter((item) => item.data.length > 0);
 
   return (
-    <div className={`sailsiq-telemetry-panel flex h-full min-h-[280px] w-full min-w-0 flex-1 flex-col overflow-y-auto p-4 ${className}`}>
+    <div
+      className={`sailsiq-telemetry-panel flex h-full w-full min-w-0 flex-1 flex-col ${
+        compact
+          ? 'sailsiq-telemetry-panel--compact min-h-0 overflow-visible p-0'
+          : 'min-h-[280px] overflow-y-auto p-4'
+      } ${className}`}
+    >
       <div className="sailsiq-telemetry-grid w-full min-w-0">
         {visibleSeries.map((item) => (
           <LineChart
@@ -58,6 +66,7 @@ export default function AdaptiveTelemetryPanel({
             selectedRange={selectedRangeForSource(item.source)}
             height={chartHeight}
             detailAnalysis
+            compact={compact}
           />
         ))}
       </div>

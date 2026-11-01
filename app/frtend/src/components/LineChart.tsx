@@ -40,6 +40,7 @@ interface LineChartProps {
   height?: number;
   /** Click chart title to open a large analysis view (grid, legend, zoom, raw samples). */
   detailAnalysis?: boolean;
+  compact?: boolean;
 }
 
 interface TelemetryChartProps {
@@ -143,25 +144,38 @@ function formatXLabel(x: number, totalLengthSeconds?: number): string {
   return `${Math.round(x)}`;
 }
 
-function shouldUseInlinePlayheadWindow(label: string): boolean {
-  const normalized = label.trim().toLowerCase();
+function isCircularDegreesSeries(label: string, unit: string): boolean {
+  const normalizedLabel = label.trim().toLowerCase();
+  const normalizedUnit = unit.trim().toLowerCase();
+  if (normalizedUnit !== 'deg' && normalizedUnit !== '°') return false;
   return (
-    normalized === 'speed' ||
-    normalized === 'sog' ||
-    normalized === 'turn rate' ||
-    normalized === 'heel' ||
-    normalized.startsWith('acceleration') ||
-    normalized.startsWith('gyro')
+    normalizedLabel === 'heading' ||
+    normalizedLabel === 'cog' ||
+    normalizedLabel.endsWith('heading') ||
+    normalizedLabel.endsWith('cog')
   );
 }
 
+function unwrapDegrees(values: number[]): number[] {
+  if (values.length < 2) return values;
+  const unwrapped: number[] = [values[0] ?? 0];
+  let accumulated = unwrapped[0]!;
+  for (let i = 1; i < values.length; i++) {
+    let delta = (values[i] ?? 0) - (values[i - 1] ?? 0);
+    if (delta > 180) delta -= 360;
+    if (delta < -180) delta += 360;
+    accumulated += delta;
+    unwrapped.push(accumulated);
+  }
+  return unwrapped;
+}
+
 function resolveInlineWindow(
-  label: string,
   mode: 'inline' | 'detail',
   playheadRatio: number,
   xMax: number,
 ): { min: number; max: number } {
-  if (mode !== 'inline' || !shouldUseInlinePlayheadWindow(label) || xMax <= 20) {
+  if (mode !== 'inline' || xMax <= 20) {
     return { min: 0, max: xMax };
   }
 
@@ -243,7 +257,11 @@ function buildChartOption({
   gridColor,
 }: Omit<TelemetryChartProps, 'height' | 'onSeek' | 'onRangeSelect' | 'onHoverRatio'>): EChartsCoreOption {
   const useSmoothedData = mode === 'inline' || detailSmoothingOn;
-  const displayData = useSmoothedData ? smoothSeries(data, smoothing, totalLengthSeconds) : data;
+  const circularDegrees = isCircularDegreesSeries(label, unit);
+  const seriesData = circularDegrees ? unwrapDegrees(data) : data;
+  const displayData = useSmoothedData
+    ? smoothSeries(seriesData, smoothing, totalLengthSeconds)
+    : seriesData;
   const xMax = getTimeMax(displayData.length, totalLengthSeconds);
   const hasExplicitX = xValues?.length === displayData.length;
   const chartData: Array<[number, number]> = displayData.map((value, index) => {
@@ -254,7 +272,7 @@ function buildChartOption({
         : 0;
     return [x, value];
   });
-  const visibleWindow = resolveInlineWindow(label, mode, playheadRatio, xMax);
+  const visibleWindow = resolveInlineWindow(mode, playheadRatio, xMax);
   const values =
     displayData.length > 0 ? valuesInVisibleWindow(chartData, visibleWindow) : [0];
   const min = Math.min(...values);
@@ -263,6 +281,7 @@ function buildChartOption({
   const range = max - min || 1;
   const yMin = min - range * 0.08;
   const yMax = max + range * 0.08;
+  const formatDegreeValue = (value: number) => ((value % 360) + 360) % 360;
   const activeRange = selectedRange
     ? [
         [
@@ -376,7 +395,10 @@ function buildChartOption({
       axisLabel: {
         show: mode === 'detail',
         color: mutedColor,
-        formatter: (value: number) => value.toFixed(Math.abs(value) < 10 ? 1 : 0),
+        formatter: (value: number) => {
+          const displayValue = circularDegrees ? formatDegreeValue(value) : value;
+          return displayValue.toFixed(Math.abs(displayValue) < 10 ? 1 : 0);
+        },
       },
       splitLine: {
         show: mode === 'detail',
@@ -401,7 +423,7 @@ function buildChartOption({
         return [
           `<div style="font-weight:600;margin-bottom:2px">${label}</div>`,
           `<div>${formatXLabel(value[0], totalLengthSeconds)}</div>`,
-          `<div>${Number(value[1]).toFixed(2)} ${unit}</div>`,
+          `<div>${(circularDegrees ? formatDegreeValue(Number(value[1])) : Number(value[1])).toFixed(2)} ${unit}</div>`,
         ].join('');
       },
     },
@@ -845,6 +867,7 @@ export default function LineChart({
   selectedRange,
   height = 80,
   detailAnalysis = false,
+  compact = false,
 }: LineChartProps) {
   const { s, themeId } = useTheme();
   const strokeColor = color || s.chartLineColor;
@@ -872,21 +895,33 @@ export default function LineChart({
   }, []);
 
   return (
-    <div className="relative flex min-w-0 flex-col gap-1">
-      <div className="flex items-center justify-between gap-2">
+    <div className={`relative flex min-w-0 flex-col ${compact ? 'gap-0.5' : 'gap-1'}`}>
+      <div className="flex items-baseline justify-between gap-2">
         {detailAnalysis ? (
           <button
             type="button"
             onClick={handleOpenDetail}
-            className={`cursor-pointer text-left text-[10px] ${s.textSecondary} underline-offset-2 hover:underline decoration-dotted`}
+            className={`cursor-pointer text-left ${
+              compact
+                ? `text-[10px] uppercase tracking-[0.14em] ${s.textSecondary}`
+                : `text-[10px] ${s.textSecondary}`
+            } underline-offset-2 hover:underline decoration-dotted`}
             title="Open detail analysis"
           >
             {label}
           </button>
         ) : (
-          <span className={`text-[10px] ${s.textSecondary}`}>{label}</span>
+          <span
+            className={`text-[10px] ${compact ? 'uppercase tracking-[0.14em]' : ''} ${s.textSecondary}`}
+          >
+            {label}
+          </span>
         )}
-        <span className={`font-mono text-xs ${s.textPrimary}`}>
+        <span
+          className={`font-mono tabular-nums ${
+            compact ? 'text-sm font-semibold' : 'text-xs'
+          } ${s.textPrimary}`}
+        >
           {activeValue.toFixed(1)} {unit}
         </span>
       </div>

@@ -28,6 +28,7 @@ interface WorkspaceTelemetryStageProps {
   telemetryDatasets?: TelemetryDataset[];
   telemetryWindow?: { startMs: number; endMs: number };
   telemetryTimeOriginMs?: number;
+  compact?: boolean;
 }
 
 export default function WorkspaceTelemetryStage({
@@ -46,6 +47,7 @@ export default function WorkspaceTelemetryStage({
   telemetryDatasets = [],
   telemetryWindow,
   telemetryTimeOriginMs,
+  compact = false,
 }: WorkspaceTelemetryStageProps) {
   const { s } = useTheme();
   const [selectedSourceFilter, setSelectedSourceFilter] =
@@ -90,7 +92,7 @@ export default function WorkspaceTelemetryStage({
   return (
     <div className={`min-h-0 flex-1 ${className}`}>
       {hasSensorTelemetry ? (
-        <div className={`flex shrink-0 items-center gap-1 border-b px-4 py-2 ${s.divider}`}>
+        <div className={`flex shrink-0 items-center gap-1 border-b py-2 ${compact ? 'px-0' : 'px-4'} ${s.divider}`}>
           {(['all', 'track', 'imu'] as const).map((item) => (
             <button
               key={item}
@@ -118,6 +120,7 @@ export default function WorkspaceTelemetryStage({
         onRangeSelect={onRangeSelect}
         selectedRangeForSource={selectedRangeForSource ?? defaultSelectedRangeForSource}
         chartHeight={chartHeight}
+        compact={compact}
       />
     </div>
   );

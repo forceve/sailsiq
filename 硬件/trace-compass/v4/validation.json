@@ -1,0 +1,1598 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "name": "valid single solid front_housing",
+      "passed": true,
+      "solids": 1,
+      "volume_mm3": 81223.04484922325
+    },
+    {
+      "name": "valid single solid rear_cover",
+      "passed": true,
+      "solids": 1,
+      "volume_mm3": 57694.63996878081
+    },
+    {
+      "name": "valid single solid mcu_carrier",
+      "passed": true,
+      "solids": 1,
+      "volume_mm3": 4822.024371145939
+    },
+    {
+      "name": "valid single solid lcd_support_tray",
+      "passed": true,
+      "solids": 1,
+      "volume_mm3": 10559.116100265688
+    },
+    {
+      "name": "valid single solid keypad_clamp",
+      "passed": true,
+      "solids": 1,
+      "volume_mm3": 1344.0451983917876
+    },
+    {
+      "name": "valid single solid sw_carrier",
+      "passed": true,
+      "solids": 1,
+      "volume_mm3": 2531.465050047446
+    },
+    {
+      "name": "valid single solid mmu_polymer_gate",
+      "passed": true,
+      "solids": 1,
+      "volume_mm3": 36.28800000000001
+    },
+    {
+      "name": "valid single solid protective_lens",
+      "passed": true,
+      "solids": 1,
+      "volume_mm3": 12150.372605141463
+    },
+    {
+      "name": "valid single solid lens_adhesive",
+      "passed": true,
+      "solids": 1,
+      "volume_mm3": 238.69690200129784
+    },
+    {
+      "name": "valid single solid lcd_rear_cushion",
+      "passed": true,
+      "solids": 1,
+      "volume_mm3": 3061.399999999999
+    },
+    {
+      "name": "valid single solid lcd_front_spacer",
+      "passed": true,
+      "solids": 1,
+      "volume_mm3": 227.58867258771272
+    },
+    {
+      "name": "valid single solid silicone_keypad",
+      "passed": true,
+      "solids": 1,
+      "volume_mm3": 3326.520624499353
+    },
+    {
+      "name": "valid single solid rear_gasket_ASSEMBLED",
+      "passed": true,
+      "solids": 1,
+      "volume_mm3": 685.4152160103574
+    },
+    {
+      "name": "assembly clearance front_housing / rear_cover",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / mcu_carrier",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / lcd_support_tray",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / keypad_clamp",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / sw_carrier",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / mmu_polymer_gate",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / protective_lens",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / lens_adhesive",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / lcd_rear_cushion",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / lcd_front_spacer",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / silicone_keypad",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / rear_gasket_ASSEMBLED",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / PCB_MCU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / PCB_BAT_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance front_housing / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance rear_cover / mcu_carrier",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_cover / lcd_support_tray",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_cover / keypad_clamp",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_cover / sw_carrier",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_cover / mmu_polymer_gate",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_cover / protective_lens",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_cover / lens_adhesive",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_cover / lcd_rear_cushion",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_cover / lcd_front_spacer",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_cover / silicone_keypad",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_cover / rear_gasket_ASSEMBLED",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance rear_cover / PCB_MCU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_cover / PCB_BAT_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance rear_cover / PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_cover / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_cover / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_cover / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance rear_cover / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance rear_cover / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / lcd_support_tray",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / keypad_clamp",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / sw_carrier",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / mmu_polymer_gate",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / protective_lens",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / lens_adhesive",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / lcd_rear_cushion",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / lcd_front_spacer",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / silicone_keypad",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / rear_gasket_ASSEMBLED",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / PCB_MCU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / PCB_BAT_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mcu_carrier / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / keypad_clamp",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / sw_carrier",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / mmu_polymer_gate",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / protective_lens",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / lens_adhesive",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / lcd_rear_cushion",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / lcd_front_spacer",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / silicone_keypad",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / rear_gasket_ASSEMBLED",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / PCB_MCU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / PCB_BAT_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_support_tray / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / sw_carrier",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / mmu_polymer_gate",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / protective_lens",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / lens_adhesive",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / lcd_rear_cushion",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / lcd_front_spacer",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / silicone_keypad",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / rear_gasket_ASSEMBLED",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / PCB_MCU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / PCB_BAT_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance keypad_clamp / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance sw_carrier / mmu_polymer_gate",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance sw_carrier / protective_lens",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance sw_carrier / lens_adhesive",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance sw_carrier / lcd_rear_cushion",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance sw_carrier / lcd_front_spacer",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance sw_carrier / silicone_keypad",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance sw_carrier / rear_gasket_ASSEMBLED",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance sw_carrier / PCB_MCU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance sw_carrier / PCB_BAT_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance sw_carrier / PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance sw_carrier / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance sw_carrier / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance sw_carrier / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance sw_carrier / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance sw_carrier / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mmu_polymer_gate / protective_lens",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mmu_polymer_gate / lens_adhesive",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mmu_polymer_gate / lcd_rear_cushion",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mmu_polymer_gate / lcd_front_spacer",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mmu_polymer_gate / silicone_keypad",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mmu_polymer_gate / rear_gasket_ASSEMBLED",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mmu_polymer_gate / PCB_MCU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mmu_polymer_gate / PCB_BAT_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mmu_polymer_gate / PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mmu_polymer_gate / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mmu_polymer_gate / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mmu_polymer_gate / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mmu_polymer_gate / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance mmu_polymer_gate / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance protective_lens / lens_adhesive",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance protective_lens / lcd_rear_cushion",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance protective_lens / lcd_front_spacer",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance protective_lens / silicone_keypad",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance protective_lens / rear_gasket_ASSEMBLED",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance protective_lens / PCB_MCU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance protective_lens / PCB_BAT_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance protective_lens / PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance protective_lens / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance protective_lens / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance protective_lens / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance protective_lens / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance protective_lens / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lens_adhesive / lcd_rear_cushion",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lens_adhesive / lcd_front_spacer",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance lens_adhesive / silicone_keypad",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lens_adhesive / rear_gasket_ASSEMBLED",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lens_adhesive / PCB_MCU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lens_adhesive / PCB_BAT_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lens_adhesive / PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lens_adhesive / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lens_adhesive / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lens_adhesive / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lens_adhesive / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lens_adhesive / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_rear_cushion / lcd_front_spacer",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_rear_cushion / silicone_keypad",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_rear_cushion / rear_gasket_ASSEMBLED",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_rear_cushion / PCB_MCU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_rear_cushion / PCB_BAT_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_rear_cushion / PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_rear_cushion / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_rear_cushion / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_rear_cushion / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_rear_cushion / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_rear_cushion / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_front_spacer / silicone_keypad",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_front_spacer / rear_gasket_ASSEMBLED",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_front_spacer / PCB_MCU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_front_spacer / PCB_BAT_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_front_spacer / PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_front_spacer / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_front_spacer / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_front_spacer / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_front_spacer / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance lcd_front_spacer / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance silicone_keypad / rear_gasket_ASSEMBLED",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance silicone_keypad / PCB_MCU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance silicone_keypad / PCB_BAT_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance silicone_keypad / PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance silicone_keypad / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance silicone_keypad / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance silicone_keypad / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance silicone_keypad / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance silicone_keypad / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_gasket_ASSEMBLED / PCB_MCU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_gasket_ASSEMBLED / PCB_BAT_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_gasket_ASSEMBLED / PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_gasket_ASSEMBLED / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_gasket_ASSEMBLED / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_gasket_ASSEMBLED / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance rear_gasket_ASSEMBLED / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance rear_gasket_ASSEMBLED / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "assembly clearance PCB_MCU_REFERENCE / PCB_BAT_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_MCU_REFERENCE / PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_MCU_REFERENCE / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_MCU_REFERENCE / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_MCU_REFERENCE / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_MCU_REFERENCE / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_MCU_REFERENCE / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_BAT_REFERENCE / PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_BAT_REFERENCE / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_BAT_REFERENCE / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_BAT_REFERENCE / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_BAT_REFERENCE / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_BAT_REFERENCE / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_MMU_REFERENCE / PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_MMU_REFERENCE / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_MMU_REFERENCE / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_MMU_REFERENCE / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_MMU_REFERENCE / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_SW_REFERENCE / LCD_91x67p6_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_SW_REFERENCE / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_SW_REFERENCE / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance PCB_SW_REFERENCE / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance LCD_91x67p6_REFERENCE / GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance LCD_91x67p6_REFERENCE / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance LCD_91x67p6_REFERENCE / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance GNSS_28x27x8_ALLOCATION / BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance GNSS_28x27x8_ALLOCATION / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "assembly clearance BATTERY_80x62x7_ALLOCATION / WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "MCU STEP mounting hole 5/5",
+      "passed": true
+    },
+    {
+      "name": "MCU STEP mounting hole 55.0001/5",
+      "passed": true
+    },
+    {
+      "name": "MCU STEP mounting hole 5/62.0001",
+      "passed": true
+    },
+    {
+      "name": "MCU STEP mounting hole 55.0001/62.0001",
+      "passed": true
+    },
+    {
+      "name": "BAT STEP mounting hole 5/5",
+      "passed": true
+    },
+    {
+      "name": "BAT STEP mounting hole 20/5",
+      "passed": true
+    },
+    {
+      "name": "BAT STEP mounting hole 5/35.0001",
+      "passed": true
+    },
+    {
+      "name": "BAT STEP mounting hole 20/35.0001",
+      "passed": true
+    },
+    {
+      "name": "SW STEP mounting hole 5/5",
+      "passed": true
+    },
+    {
+      "name": "SW STEP mounting hole 25.0001/5",
+      "passed": true
+    },
+    {
+      "name": "SW STEP mounting hole 75.0001/5",
+      "passed": true
+    },
+    {
+      "name": "SW STEP mounting hole 95.0002/5",
+      "passed": true
+    },
+    {
+      "name": "screen thickness .725",
+      "passed": true
+    },
+    {
+      "name": "interior reference depth 26..28",
+      "passed": true,
+      "rear_to_lcd_back_mm": 27.375,
+      "rear_to_front_roof_mm": 27.4
+    },
+    {
+      "name": "MMU vertical, native normal along X",
+      "passed": true
+    },
+    {
+      "name": "BAT at bottom rear floor, USB facing inward",
+      "passed": true
+    },
+    {
+      "name": "45deg optical ray azimuth 0",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "45deg optical ray azimuth 30",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "45deg optical ray azimuth 60",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "45deg optical ray azimuth 90",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "45deg optical ray azimuth 120",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "45deg optical ray azimuth 150",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "45deg optical ray azimuth 180",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "45deg optical ray azimuth 210",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "45deg optical ray azimuth 240",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "45deg optical ray azimuth 270",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "45deg optical ray azimuth 300",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "45deg optical ray azimuth 330",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "screen FPC route length plus 5mm insertion/slack <=32.95",
+      "passed": true,
+      "path_mm": 24.183185300224547,
+      "reserve_mm": 8.766814699775455
+    },
+    {
+      "name": "screen FPC swept ribbon clearance front_housing",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance rear_cover",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance mcu_carrier",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance lcd_support_tray",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance keypad_clamp",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance sw_carrier",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance mmu_polymer_gate",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance protective_lens",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance lens_adhesive",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance lcd_rear_cushion",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance lcd_front_spacer",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance silicone_keypad",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance rear_gasket_ASSEMBLED",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance PCB_MCU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance PCB_BAT_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance PCB_MMU_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance PCB_SW_REFERENCE",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance GNSS_28x27x8_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance BATTERY_80x62x7_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "screen FPC swept ribbon clearance WIRELESS_50x50x2_ALLOCATION",
+      "passed": true,
+      "overlap_mm3": 0.0
+    },
+    {
+      "name": "entire lens adhesive footprint supported",
+      "passed": true
+    },
+    {
+      "name": "key 1 nominal rest gap",
+      "passed": true
+    },
+    {
+      "name": "key 2 nominal rest gap",
+      "passed": true
+    },
+    {
+      "name": "key 3 nominal rest gap",
+      "passed": true
+    },
+    {
+      "name": "key 4 nominal rest gap",
+      "passed": true
+    },
+    {
+      "name": "sky keepout PCB_MCU_REFERENCE",
+      "passed": true
+    },
+    {
+      "name": "sky keepout PCB_BAT_REFERENCE",
+      "passed": true
+    },
+    {
+      "name": "sky keepout PCB_MMU_REFERENCE",
+      "passed": true
+    },
+    {
+      "name": "sky keepout PCB_SW_REFERENCE",
+      "passed": true
+    },
+    {
+      "name": "sky keepout LCD_91x67p6_REFERENCE",
+      "passed": true
+    },
+    {
+      "name": "sky keepout BATTERY_80x62x7_ALLOCATION",
+      "passed": true
+    },
+    {
+      "name": "sky keepout WIRELESS_50x50x2_ALLOCATION",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance front_housing",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance rear_cover",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance mcu_carrier",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance lcd_support_tray",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance keypad_clamp",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance sw_carrier",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance mmu_polymer_gate",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance protective_lens",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance lens_adhesive",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance lcd_rear_cushion",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance lcd_front_spacer",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance silicone_keypad",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance rear_gasket_ASSEMBLED",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance PCB_MCU_REFERENCE",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance PCB_BAT_REFERENCE",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance PCB_MMU_REFERENCE",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance PCB_SW_REFERENCE",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance LCD_91x67p6_REFERENCE",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance GNSS_28x27x8_ALLOCATION",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance BATTERY_80x62x7_ALLOCATION",
+      "passed": true
+    },
+    {
+      "name": "MCU_USB_INSERTION clearance WIRELESS_50x50x2_ALLOCATION",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance front_housing",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance rear_cover",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance mcu_carrier",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance lcd_support_tray",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance keypad_clamp",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance sw_carrier",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance mmu_polymer_gate",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance protective_lens",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance lens_adhesive",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance lcd_rear_cushion",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance lcd_front_spacer",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance silicone_keypad",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance rear_gasket_ASSEMBLED",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance PCB_MCU_REFERENCE",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance PCB_BAT_REFERENCE",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance PCB_MMU_REFERENCE",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance PCB_SW_REFERENCE",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance LCD_91x67p6_REFERENCE",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance GNSS_28x27x8_ALLOCATION",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance BATTERY_80x62x7_ALLOCATION",
+      "passed": true
+    },
+    {
+      "name": "BAT_USB_PLUG clearance WIRELESS_50x50x2_ALLOCATION",
+      "passed": true
+    }
+  ],
+  "check_count": 326,
+  "source_sha256": "360c501c869f37d25d3a404cd589465bf48d894e91c6ff7e792d5c9b33932af2",
+  "mmu_separation_bbox_lower_bounds_mm": {
+    "PCB_BAT_REFERENCE": 51.43022640758345,
+    "PCB_MCU_REFERENCE": 58.39264912574505,
+    "GNSS_28x27x8_ALLOCATION": 76.05999911676321,
+    "BATTERY_80x62x7_ALLOCATION": 27.379949100345,
+    "WIRELESS_50x50x2_ALLOCATION": 40.90177931297487
+  },
+  "limits": [
+    "Battery and wireless charger are lowest-priority adjustable allocations, not selected products.",
+    "GNSS sources disagree: JPG 25x25x6.4, guide 26x28x8. Allocation 28x27x8 covers both nominal footprints in upright use.",
+    "Actual PCB STEP assemblies retained. Imported component models may have internal overlap or missing details.",
+    "FPC width, bend radius, latch contact face and service slack need actual parts; route is a geometric candidate.",
+    "Other harnesses are route planning only, not final cable geometry or length requirements.",
+    "Button force/travel, soft material compression, fasteners, thermal, RF, magnetic and water tests not qualified."
+  ]
+}

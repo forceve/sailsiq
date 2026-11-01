@@ -723,6 +723,32 @@ function validateBlock(
   return { header, block };
 }
 
+function scanCommittedBlocks(
+  bytes: Uint8Array,
+  salvage: boolean,
+): Array<{ header: BlockHeader; block: Uint8Array }> {
+  const blocks: Array<{ header: BlockHeader; block: Uint8Array }> = [];
+  let offset = DATA_OFFSET;
+  let expectedSequence: number | null = null;
+  const minBlock = BLOCK_HEADER_SIZE + FOOTER_SIZE;
+
+  while (offset + minBlock <= bytes.length) {
+    const validated = validateBlock(bytes, offset, expectedSequence);
+    if (validated) {
+      expectedSequence = validated.header.blockSequence + 1;
+      offset += validated.header.blockLength;
+      blocks.push(validated);
+      continue;
+    }
+    if (!salvage || blocks.length > 0) break;
+    offset += 1;
+    while (offset + minBlock <= bytes.length && !magicAt(bytes, offset, MAGIC_LDBK)) {
+      offset += 1;
+    }
+  }
+  return blocks;
+}
+
 function expandStreamToSlots(
   descriptor: StreamDescriptor,
   definition: FieldDefinition,
@@ -794,16 +820,12 @@ export function decodeLdcTrack(bytes: Uint8Array): DecodedLdcTrack {
 
   const warnings: string[] = [];
   const points: DecodedLdcTrack['points'] = [];
-  const blocks: Array<{ header: BlockHeader; block: Uint8Array }> = [];
-  let offset = DATA_OFFSET;
-  let expectedSequence: number | null = null;
-
-  while (offset + BLOCK_HEADER_SIZE + FOOTER_SIZE <= bytes.length) {
-    const validated = validateBlock(bytes, offset, expectedSequence);
-    if (!validated) break;
-    expectedSequence = validated.header.blockSequence + 1;
-    offset += validated.header.blockLength;
-    blocks.push(validated);
+  let blocks = scanCommittedBlocks(bytes, false);
+  if (blocks.length === 0) {
+    blocks = scanCommittedBlocks(bytes, true);
+    if (blocks.length > 0) {
+      warnings.push('The start of this LDC data region was skipped; committed blocks after that prefix were imported.');
+    }
   }
 
   const utcAnchor = blocks.find((entry) => (entry.header.timeFlags & TIME_FLAG_UTC_VALID) !== 0)
@@ -812,6 +834,10 @@ export function decodeLdcTrack(bytes: Uint8Array): DecodedLdcTrack {
   let hadSourceSpeed = false;
   let hadSourceHeading = false;
   let skippedFix = 0;
+  let skippedRange = 0;
+  let keptWithoutFix = 0;
+  let sawLatLonDescriptor = false;
+  let failedLatLonDecode = 0;
   let estimatedUtc = false;
 
   for (const { header, block } of blocks) {
@@ -826,16 +852,25 @@ export function decodeLdcTrack(bytes: Uint8Array): DecodedLdcTrack {
     const fix: Array<number | undefined> = Array(header.nominalSlots);
 
     for (const descriptor of descriptors) {
+      const isLatLon =
+        descriptor.localFieldId === latField || descriptor.localFieldId === lonField;
+      if (isLatLon) sawLatLonDescriptor = true;
       const definition = tables.definitions.get(
         `${descriptor.localFieldId}:${descriptor.definitionVersion}`,
       );
-      if (!definition) continue;
+      if (!definition) {
+        if (isLatLon) failedLatLonDecode += 1;
+        continue;
+      }
       const payload = block.subarray(
         descriptor.payloadOffset,
         descriptor.payloadOffset + descriptor.payloadLength,
       );
       const values = expandStreamToSlots(descriptor, definition, payload, header, present);
-      if (!values) continue;
+      if (!values) {
+        if (isLatLon) failedLatLonDecode += 1;
+        continue;
+      }
       if (descriptor.localFieldId === latField) {
         for (let i = 0; i < values.length; i++) {
           if (values[i] != null) lat[i] = toDegrees(values[i]!, definition);
@@ -861,12 +896,20 @@ export function decodeLdcTrack(bytes: Uint8Array): DecodedLdcTrack {
       const slotLat = lat[slot];
       const slotLon = lon[slot];
       if (slotLat == null || slotLon == null) continue;
-      if (!Number.isFinite(slotLat) || !Number.isFinite(slotLon)) continue;
-      if (slotLat < -90 || slotLat > 90 || slotLon < -180 || slotLon >= 180) continue;
-      const slotFix = fix[slot];
-      if (slotFix === 0 || slotFix === 5) {
+      if (!Number.isFinite(slotLat) || !Number.isFinite(slotLon)) {
+        skippedRange += 1;
+        continue;
+      }
+      if (slotLat < -90 || slotLat > 90 || slotLon < -180 || slotLon >= 180) {
+        skippedRange += 1;
+        continue;
+      }
+      if (Math.abs(slotLat) < 1e-6 && Math.abs(slotLon) < 1e-6) {
         skippedFix += 1;
         continue;
+      }
+      if (fix[slot] === 0 || fix[slot] === 5) {
+        keptWithoutFix += 1;
       }
       const offsetUs = slotOffsetUs(slot, header.sampleRateNum, header.sampleRateDen);
       const monoUs = header.startMonoUs + offsetUs;
@@ -898,6 +941,26 @@ export function decodeLdcTrack(bytes: Uint8Array): DecodedLdcTrack {
   }
 
   if (points.length === 0) {
+    if (blocks.length === 0) {
+      throw new Error(
+        'This LDC file has no committed data blocks. The recording may still be open, or the copy was taken before the first block was flushed.',
+      );
+    }
+    if (!sawLatLonDescriptor) {
+      throw new Error(
+        'This LDC file declares latitude/longitude fields, but none of the committed blocks contain GNSS position samples. The device probably never had a GPS fix during this recording.',
+      );
+    }
+    if (failedLatLonDecode > 0) {
+      throw new Error(
+        'This LDC file contains latitude/longitude streams, but they could not be decoded.',
+      );
+    }
+    if (skippedRange > 0) {
+      throw new Error(
+        'This LDC file contains coordinate samples, but none were valid WGS84 latitude/longitude values.',
+      );
+    }
     throw new Error('No usable latitude/longitude samples were found in this LDC file.');
   }
   if (!hadSourceTime && points.length > 0) {
@@ -907,7 +970,12 @@ export function decodeLdcTrack(bytes: Uint8Array): DecodedLdcTrack {
     }
   }
   if (skippedFix > 0) {
-    warnings.push(`Skipped ${skippedFix} LDC samples without a usable GNSS fix.`);
+    warnings.push(`Skipped ${skippedFix} LDC samples at 0,0 or without a usable GNSS fix.`);
+  }
+  if (keptWithoutFix > 0) {
+    warnings.push(
+      `Imported ${keptWithoutFix} LDC samples whose GNSS fix was NONE or TIME_ONLY.`,
+    );
   }
   if (!hadSourceTime) {
     warnings.push('This LDC file has no valid UTC timestamps; time is taken from the device clock.');

@@ -1,0 +1,120 @@
+/////////////HSD 4.2” 300x400 Mono High Scan Rate Initial Code (8Hz)/////////////////
+  LCD_WR_REG(0xD6); //NVM Load Control 
+	LCD_WR_DATA8(0X17); 
+	LCD_WR_DATA8(0X02);
+	 
+	LCD_WR_REG(0xD1); //Booster Enable 
+	LCD_WR_DATA8(0X01); 
+
+	LCD_WR_REG(0xC0); //Gate Voltage Setting 
+	LCD_WR_DATA8(0X11); //VGH 00:8V  04:10V  08:12V   0E:15V  11:16.5V
+	LCD_WR_DATA8(0X04); //VGL 00:-5V   04:-7V   0A:-10V 
+
+// VLC=3.6V (12/-5)(delta Vp=0.6V)		
+	LCD_WR_REG(0xC1); //VSHP Setting (4.8V)	
+	LCD_WR_DATA8(0X41); //VSHP1  5.0V	
+	LCD_WR_DATA8(0X41); //VSHP2  5.0V	
+	LCD_WR_DATA8(0X41); //VSHP3  5.0V	
+	LCD_WR_DATA8(0X41); //VSHP4	 5.0V
+		
+	LCD_WR_REG(0xC2); //VSLP Setting (0.98V)	
+	LCD_WR_DATA8(0X19); //VSLP1  0.5V	
+	LCD_WR_DATA8(0X19); //VSLP2  0.5V
+	LCD_WR_DATA8(0X19); //VSLP3  0.5V
+	LCD_WR_DATA8(0X19); //VSLP4  0.5V
+		
+	LCD_WR_REG(0xC4); //VSHN Setting (-3.6V)	
+	LCD_WR_DATA8(0X41); //VSHN1	  3.8V
+	LCD_WR_DATA8(0X41); //VSHN2 	3.8V
+	LCD_WR_DATA8(0X41); //VSHN3 	3.8V
+	LCD_WR_DATA8(0X41); //VSHN4 	3.8V
+		
+	LCD_WR_REG(0xC5); //VSLN Setting (0.22V)	
+	LCD_WR_DATA8(0X19); //VSLN1 	0.5V
+	LCD_WR_DATA8(0X19); //VSLN2 	0.5V
+	LCD_WR_DATA8(0X19); //VSLN3 	0.5V
+	LCD_WR_DATA8(0X19); //VSLN4   0.5V
+
+	LCD_WR_REG(0xD8); //HPM=32Hz
+	LCD_WR_DATA8(0XA6); //~51Hz
+	LCD_WR_DATA8(0XE9); //~1Hz
+
+/*-- HPM=32hz ; LPM=> 0x15=8Hz 0x14=4Hz 0x13=2Hz 0x12=1Hz 0x11=0.5Hz 0x10=0.25Hz---*/
+	LCD_WR_REG(0xB2); //Frame Rate Control 
+	LCD_WR_DATA8(0X05); //12--HPM=32hz ; LPM=1hz   05--HPM=16hz ; LPM=8hz
+
+	LCD_WR_REG(0xB3); //Update Period Gate EQ Control in HPM 
+	LCD_WR_DATA8(0XE5); 
+	LCD_WR_DATA8(0XF6); 
+	LCD_WR_DATA8(0X05); //HPM EQ Control 
+	LCD_WR_DATA8(0X46); 
+	LCD_WR_DATA8(0X77); 
+	LCD_WR_DATA8(0X77); 
+	LCD_WR_DATA8(0X77); 
+	LCD_WR_DATA8(0X77); 
+	LCD_WR_DATA8(0X76); 
+	LCD_WR_DATA8(0X45); 
+
+	LCD_WR_REG(0xB4); //Update Period Gate EQ Control in LPM 
+	LCD_WR_DATA8(0X05); //LPM EQ Control 
+	LCD_WR_DATA8(0X46); 
+	LCD_WR_DATA8(0X77); 
+	LCD_WR_DATA8(0X77); 
+	LCD_WR_DATA8(0X77); 
+	LCD_WR_DATA8(0X77); 
+	LCD_WR_DATA8(0X76); 
+	LCD_WR_DATA8(0X45); 
+
+	LCD_WR_REG(0x62); //Gate Timing Control
+	LCD_WR_DATA8(0X32);
+	LCD_WR_DATA8(0X03);
+	LCD_WR_DATA8(0X1F);
+
+	LCD_WR_REG(0xB7); //Source EQ Enable 
+	LCD_WR_DATA8(0X13); 
+
+	LCD_WR_REG(0xB0); //Gate Line Setting 
+	LCD_WR_DATA8(0X64); //60---384 line    64---400 line
+
+	LCD_WR_REG(0x11); //Sleep out 
+	delay_ms(120); 
+
+	LCD_WR_REG(0xC9); //Source Voltage Select  
+	LCD_WR_DATA8(0X00); //VSHP1; VSLP1 ; VSHN1 ; VSLN1
+	
+	LCD_WR_REG(0x36); //Memory Data Access Control
+	LCD_WR_DATA8(0X00); //MX=1 ; DO=1 
+
+	
+	LCD_WR_REG(0x3A); //Data Format Select 
+	LCD_WR_DATA8(0X11); //10:4write for 24bit ; 11: 3write for 24bit
+
+	LCD_WR_REG(0xB9); //Gamma Mode Setting 
+	LCD_WR_DATA8(0X20); //20: Mono 00:4GS 
+
+	LCD_WR_REG(0xB8); //Panel Setting 
+	LCD_WR_DATA8(0X29); // Panel Setting Frame inversion  09:column 29:dot_1-Frame 25:dot_1-Line
+
+  LCD_WR_REG(0x21); //Inverse
+
+	//WRITE RAM 300*400
+	LCD_WR_REG(0x2A); //Column Address Setting 
+	LCD_WR_DATA8(0X12); 
+	LCD_WR_DATA8(0X2A); 
+
+	LCD_WR_REG(0x2B); //Row Address Setting 
+	LCD_WR_DATA8(0X00); 
+	LCD_WR_DATA8(0XC7); 
+/*
+	LCD_WR_REG(0x72); //de-stress off 
+	LCD_WR_DATA8(0X13);
+*/
+	LCD_WR_REG(0x35); //TE
+	LCD_WR_DATA8(0X00); //
+
+	LCD_WR_REG(0xD0); //Auto power dowb
+	LCD_WR_DATA8(0XFF); //
+
+	LCD_WR_REG(0x39); //LPM
+
+	LCD_WR_REG(0x29); //DISPLAY ON  

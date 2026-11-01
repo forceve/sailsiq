@@ -39,3 +39,11 @@ test-results/
 **/*.py[cod]
 **/*$py.class
 
+# Compass handoff: retain supplied PCB models and V4/V4.1 CAD deliverables.
+!硬件/compass元件设计文件/PCB/pcbmodels/*.step
+!硬件/trace-compass/v4/references/PCB/pcbmodels/*.step
+!硬件/trace-compass/v4/cadquery_out/
+!硬件/trace-compass/v4/cadquery_out/*.step
+!硬件/trace-compass/v4_1/cadquery_out/
+!硬件/trace-compass/v4_1/cadquery_out/*.step
+

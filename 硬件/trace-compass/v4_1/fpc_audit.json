@@ -1,0 +1,159 @@
+{
+  "status": "BLOCKED",
+  "v4_direct_route_electrically_valid": false,
+  "reference_view": "From display front: +X right, +Y sky, +Z viewer; FPC exits right short edge.",
+  "pcb_sha256": "544b8152c7e85fd223cad83dcd6d1fecdb098d622f23ef84cb0eb0e8619c7cea",
+  "rows": [
+    {
+      "lcd_pin": 1,
+      "lcd_signal": "GND",
+      "lcd_device_y_mm": 7.25,
+      "cn1_pin_on_v4_untwisted_route": 1,
+      "cn1_device_y_mm": 7.25,
+      "cn1_net": "GND",
+      "signal_matches": true,
+      "required_cn1_pin": 12,
+      "required_net_matches": true
+    },
+    {
+      "lcd_pin": 2,
+      "lcd_signal": "NC",
+      "lcd_device_y_mm": 7.75,
+      "cn1_pin_on_v4_untwisted_route": 2,
+      "cn1_device_y_mm": 7.7504,
+      "cn1_net": "GPIO_10",
+      "signal_matches": false,
+      "required_cn1_pin": 11,
+      "required_net_matches": true
+    },
+    {
+      "lcd_pin": 3,
+      "lcd_signal": "NC",
+      "lcd_device_y_mm": 8.25,
+      "cn1_pin_on_v4_untwisted_route": 3,
+      "cn1_device_y_mm": 8.2508,
+      "cn1_net": "GPIO_11",
+      "signal_matches": false,
+      "required_cn1_pin": 10,
+      "required_net_matches": true
+    },
+    {
+      "lcd_pin": 4,
+      "lcd_signal": "VCI",
+      "lcd_device_y_mm": 8.75,
+      "cn1_pin_on_v4_untwisted_route": 4,
+      "cn1_device_y_mm": 8.7511,
+      "cn1_net": "GPIO_12",
+      "signal_matches": false,
+      "required_cn1_pin": 9,
+      "required_net_matches": true
+    },
+    {
+      "lcd_pin": 5,
+      "lcd_signal": "GND",
+      "lcd_device_y_mm": 9.25,
+      "cn1_pin_on_v4_untwisted_route": 5,
+      "cn1_device_y_mm": 9.249,
+      "cn1_net": "GPIO_13",
+      "signal_matches": false,
+      "required_cn1_pin": 8,
+      "required_net_matches": true
+    },
+    {
+      "lcd_pin": 6,
+      "lcd_signal": "TE",
+      "lcd_device_y_mm": 9.75,
+      "cn1_pin_on_v4_untwisted_route": 6,
+      "cn1_device_y_mm": 9.7494,
+      "cn1_net": "GPIO_14",
+      "signal_matches": false,
+      "required_cn1_pin": 7,
+      "required_net_matches": true
+    },
+    {
+      "lcd_pin": 7,
+      "lcd_signal": "DC",
+      "lcd_device_y_mm": 10.25,
+      "cn1_pin_on_v4_untwisted_route": 7,
+      "cn1_device_y_mm": 10.2497,
+      "cn1_net": "GPIO_21",
+      "signal_matches": false,
+      "required_cn1_pin": 6,
+      "required_net_matches": true
+    },
+    {
+      "lcd_pin": 8,
+      "lcd_signal": "CS",
+      "lcd_device_y_mm": 10.75,
+      "cn1_pin_on_v4_untwisted_route": 8,
+      "cn1_device_y_mm": 10.7501,
+      "cn1_net": "GND",
+      "signal_matches": false,
+      "required_cn1_pin": 5,
+      "required_net_matches": true
+    },
+    {
+      "lcd_pin": 9,
+      "lcd_signal": "SCL",
+      "lcd_device_y_mm": 11.25,
+      "cn1_pin_on_v4_untwisted_route": 9,
+      "cn1_device_y_mm": 11.2505,
+      "cn1_net": "3V3",
+      "signal_matches": false,
+      "required_cn1_pin": 4,
+      "required_net_matches": true
+    },
+    {
+      "lcd_pin": 10,
+      "lcd_signal": "SDA",
+      "lcd_device_y_mm": 11.75,
+      "cn1_pin_on_v4_untwisted_route": 10,
+      "cn1_device_y_mm": 11.7509,
+      "cn1_net": "NC",
+      "signal_matches": false,
+      "required_cn1_pin": 3,
+      "required_net_matches": true
+    },
+    {
+      "lcd_pin": 11,
+      "lcd_signal": "RESET",
+      "lcd_device_y_mm": 12.25,
+      "cn1_pin_on_v4_untwisted_route": 11,
+      "cn1_device_y_mm": 12.2513,
+      "cn1_net": "NC",
+      "signal_matches": false,
+      "required_cn1_pin": 2,
+      "required_net_matches": true
+    },
+    {
+      "lcd_pin": 12,
+      "lcd_signal": "GND",
+      "lcd_device_y_mm": 12.75,
+      "cn1_pin_on_v4_untwisted_route": 12,
+      "cn1_device_y_mm": 12.7491,
+      "cn1_net": "GND",
+      "signal_matches": true,
+      "required_cn1_pin": 1,
+      "required_net_matches": true
+    }
+  ],
+  "drawing_dimensions_mm": {
+    "tail_length": 32.95,
+    "tail_length_tolerance": 0.3,
+    "pitch": 0.5,
+    "contact_width": 0.3,
+    "contact_span": 5.5,
+    "tail_width": 6.5,
+    "tail_width_tolerance": 0.1,
+    "exposed_contact_length": 3.5,
+    "reinforcement_length": 5,
+    "reinforced_thickness": 0.3,
+    "reinforced_thickness_tolerance": 0.03
+  },
+  "mechanical_findings": [
+    "v4 tail strip bottom Z=20.725 exceeds supplied connector maximum Z=20.6201: route did not mate.",
+    "v4 R2 bends were not constrained to the manufacturer single-layer bend region; 1.0 mm component region was not modeled.",
+    "v4 0.15 mm uniform strip omitted 0.30 mm reinforced contact tail.",
+    "Turning MCU about device X flips its Y pin order without changing +X insertion side; viable direction to investigate, not an approved assembly."
+  ]
+}

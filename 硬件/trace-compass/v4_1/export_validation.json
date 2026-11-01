@@ -1,0 +1,150 @@
+{
+  "passed": true,
+  "check_count": 26,
+  "checks": [
+    {
+      "name": "front_housing STEP",
+      "passed": true,
+      "symmetric_difference_mm3": 0,
+      "sha256": "9e5d6b9054ab5860a7adf0d1042db0a528f39b6bc6ea5219033c8e2e52ec8f68"
+    },
+    {
+      "name": "front_housing STL",
+      "passed": true,
+      "open_or_nonmanifold_edges": 0
+    },
+    {
+      "name": "rear_cover STEP",
+      "passed": true,
+      "symmetric_difference_mm3": 0,
+      "sha256": "0cf025292a20aee27e039f280d46c5d01b8a7624d854e8ca19c1d33038653fc9"
+    },
+    {
+      "name": "rear_cover STL",
+      "passed": true,
+      "open_or_nonmanifold_edges": 0
+    },
+    {
+      "name": "mcu_carrier STEP",
+      "passed": true,
+      "symmetric_difference_mm3": 0,
+      "sha256": "8fc2357739e64f1cef2cc7c1f81769c979e6ef265725bf61df0bdba9b5ff8989"
+    },
+    {
+      "name": "mcu_carrier STL",
+      "passed": true,
+      "open_or_nonmanifold_edges": 0
+    },
+    {
+      "name": "lcd_support_tray STEP",
+      "passed": true,
+      "symmetric_difference_mm3": 0,
+      "sha256": "1b0b528553037c5edd5302e8cd0102001094117709425658d1735ae420e36eaf"
+    },
+    {
+      "name": "lcd_support_tray STL",
+      "passed": true,
+      "open_or_nonmanifold_edges": 0
+    },
+    {
+      "name": "keypad_clamp STEP",
+      "passed": true,
+      "symmetric_difference_mm3": 0,
+      "sha256": "4f420f809091b04e700a1a86ee5c5c47d8f51c8389bea1b0115ce2319c470974"
+    },
+    {
+      "name": "keypad_clamp STL",
+      "passed": true,
+      "open_or_nonmanifold_edges": 0
+    },
+    {
+      "name": "sw_carrier STEP",
+      "passed": true,
+      "symmetric_difference_mm3": 0,
+      "sha256": "d7d9a2d039c8c6bbbb89dde5c81466ad39a27ef27153186cd212047e90fac81f"
+    },
+    {
+      "name": "sw_carrier STL",
+      "passed": true,
+      "open_or_nonmanifold_edges": 0
+    },
+    {
+      "name": "mmu_pressure_frame STEP",
+      "passed": true,
+      "symmetric_difference_mm3": 0,
+      "sha256": "2bdacacdaec040dda2f2964d8cd041c9ec3a19731a366898c03ebcb0778744bd"
+    },
+    {
+      "name": "mmu_pressure_frame STL",
+      "passed": true,
+      "open_or_nonmanifold_edges": 0
+    },
+    {
+      "name": "protective_lens STEP",
+      "passed": true,
+      "symmetric_difference_mm3": 0,
+      "sha256": "a066e7e8924171e050c7997efb0a9f6223edd34421c3d211dcd02b89676be786"
+    },
+    {
+      "name": "protective_lens STL",
+      "passed": true,
+      "open_or_nonmanifold_edges": 0
+    },
+    {
+      "name": "lens_adhesive STEP",
+      "passed": true,
+      "symmetric_difference_mm3": 0,
+      "sha256": "4e791efd112476caefb7ceaffc38913e0c9e044176acaf71122f1f3518c0290b"
+    },
+    {
+      "name": "lens_adhesive STL",
+      "passed": true,
+      "open_or_nonmanifold_edges": 0
+    },
+    {
+      "name": "lcd_rear_cushion STEP",
+      "passed": true,
+      "symmetric_difference_mm3": 0,
+      "sha256": "88c4fd0819ddd45f395402dfb85c2459a3be14926211544632d7f4f35d360c89"
+    },
+    {
+      "name": "lcd_rear_cushion STL",
+      "passed": true,
+      "open_or_nonmanifold_edges": 0
+    },
+    {
+      "name": "lcd_front_spacer STEP",
+      "passed": true,
+      "symmetric_difference_mm3": 0,
+      "sha256": "f8a83aa74c89f023c4bef9d7112c31252945e234b106b15968793424a0f22699"
+    },
+    {
+      "name": "lcd_front_spacer STL",
+      "passed": true,
+      "open_or_nonmanifold_edges": 0
+    },
+    {
+      "name": "silicone_keypad STEP",
+      "passed": true,
+      "symmetric_difference_mm3": 0,
+      "sha256": "f4bb6271b5eafb448fa6d84dd6c68f4fa7a5f20701950fb885fa33dffdfc482a"
+    },
+    {
+      "name": "silicone_keypad STL",
+      "passed": true,
+      "open_or_nonmanifold_edges": 0
+    },
+    {
+      "name": "rear_gasket_ASSEMBLED STEP",
+      "passed": true,
+      "symmetric_difference_mm3": 0,
+      "sha256": "84ffafe03ea86c74399fdae4cb67ccb7c74a547a502d3acb5ac130f3438e24e1"
+    },
+    {
+      "name": "rear_gasket_ASSEMBLED STL",
+      "passed": true,
+      "open_or_nonmanifold_edges": 0
+    }
+  ],
+  "source_sha256": "dfccbbc39e05e85c0de05224cb905b32c690a7a15eeb7498103275f68f6a0fa8"
+}

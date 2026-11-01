@@ -1,0 +1,55 @@
+                                                                                                   由 Autodesk 教育版产品制作
+                                                                                                            总厚
+                                                                                                    上偏光片
+                                                                                             易撕贴
+
+
+
+
+                                                                                                                                                                由 Autodesk 教育版产品制作
+由 Autodesk 教育版产品制作
+
+
+
+
+                                                                                                                                     PIN   NAME     描述
+                                                                                                                                     1     GND    电源地
+                                                         单层弯折区
+                                                                                                                                     2     NC     空脚
+                                                             元件放置区
+                                                             T=1.0mm(max)
+
+                                                                             元件表面贴高温胶带
+                                                                                                                                     3     NC     空脚
+                                                                                                                                     4     VCI 电源正极2.8/3.3V
+                                                                                                                                     5     GND    电源地
+                                                                                                                                                  防撕裂模式帧头信号输出
+                                                 对位丝印线
+                                                         1            12
+                                                                                                                          12   1
+                                                                                                                                     6     TE     不用时，空置即可
+                                                  PI补强
+                                                                                                                                     7     DC    数据指令选择脚
+                                                                                                           补强
+                                                                                                                                     8     CS    片选脚
+                                                                                                                                     9     SCL SPI 时钟信号
+                     DISPLAY MODE
+                                            MONO TFT                                                                                 10    SDA SPI 数据信号
+                                            Reflective                      NORMALLY WITHE
+                                            ALL O'CLOCK
+                                                                                                                                     11    RESET 复位脚
+                     VIEWING ANGLE
+                                                                                                                                     12    GND    电源地
+                     DRIVE IC / INTERFACE
+                     OPERATING VOLTAGE
+                                            ST7305
+                                            VDD:2.8V/3.3V
+                                                                                                                         展开出货
+                     BACKLIGHT
+                                            Without                                                                                SPI 4线
+                     SURFACE LUMINANCE
+                     OPERATING TEMP.        -20°C~+70°C
+                     STORAGE TEMP.          -30°C~+80°C
+                     CRITICAL DIMENSION      *
+                                                                                                    由 Autodesk 教育版产品制作
+
